@@ -4,18 +4,24 @@
 # the MPI-provided mpiexec for several rank counts and processor grids.
 
 using DistributedNavierStokes
+using KernelAbstractions
 using MPI
+using Random
 using Test
 
 const DNS = DistributedNavierStokes
 
+MPI.Init()
+
 @testset "DistributedNavierStokes" begin
+    include("serialtests.jl")
+
     @testset "blockrange" begin
         for n in (1, 5, 8, 13), p in (1, 2, 3, 4)
-            blocks = [DNS.blockrange(n, p, c) for c in 0:(p-1)]
+            blocks = [DNS.blockrange(n, p, c) for c = 0:(p-1)]
             @test first(blocks[1]) == 1
             @test last(blocks[end]) == n
-            @test all(first(blocks[c+1]) == last(blocks[c]) + 1 for c in 1:(p-1))
+            @test all(first(blocks[c+1]) == last(blocks[c]) + 1 for c = 1:(p-1))
             @test maximum(length, blocks) - minimum(length, blocks) ≤ 1
         end
     end

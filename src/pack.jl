@@ -25,7 +25,12 @@ function pack!(buf, a, boxes, backend)
         n == 0 && continue
         o = map(r -> first(r) - 1, b)
         pack_kernel!(backend)(
-            buf, a, off, o..., length(b[1]), length(b[2]);
+            buf,
+            a,
+            off,
+            o...,
+            length(b[1]),
+            length(b[2]);
             ndrange = map(length, b),
         )
         off += n
@@ -40,11 +45,23 @@ function unpack!(a, buf, boxes, backend)
         n == 0 && continue
         o = map(r -> first(r) - 1, b)
         unpack_kernel!(backend)(
-            a, buf, off, o..., length(b[1]), length(b[2]);
+            a,
+            buf,
+            off,
+            o...,
+            length(b[1]),
+            length(b[2]);
             ndrange = map(length, b),
         )
         off += n
     end
+end
+
+"Upload a host vector to the backend."
+function todevice(backend, v::AbstractVector{T}) where {T}
+    a = KernelAbstractions.allocate(backend, T, length(v))
+    copyto!(a, v)
+    a
 end
 
 "Copy box `bsrc` of `src` into box `bdst` of `dst` (equal box sizes)."
@@ -52,7 +69,10 @@ function copybox!(dst, bdst, src, bsrc, backend)
     @assert map(length, bdst) == map(length, bsrc)
     prod(length, bdst) == 0 && return
     copybox_kernel!(backend)(
-        dst, src, map(r -> first(r) - 1, bdst)..., map(r -> first(r) - 1, bsrc)...;
+        dst,
+        src,
+        map(r -> first(r) - 1, bdst)...,
+        map(r -> first(r) - 1, bsrc)...;
         ndrange = map(length, bdst),
     )
 end

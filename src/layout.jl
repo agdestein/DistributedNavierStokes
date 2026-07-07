@@ -3,7 +3,7 @@
 # data (a NamedTuple); the MPI cartesian communicator provides the topology.
 
 "Balanced block `c` (0-based) of `n` points over `p` ranks."
-blockrange(n, p, c) = (c * n ÷ p + 1):((c + 1) * n ÷ p)
+blockrange(n, p, c) = (c*n÷p+1):((c+1)*n÷p)
 
 """
 Processor-grid axis assignment `axes[d] ∈ (0, 1, 2)` for each global

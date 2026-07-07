@@ -16,5 +16,14 @@ using Printf: @sprintf
 include("layout.jl")
 include("pack.jl")
 include("transpose.jl")
+include("halo.jl")
+include("poisson.jl")
+include("operators.jl")
+include("timestep.jl")
+include("setup.jl")
+include("fields.jl")
+
+export setup, solve!, exchange_halo!
+export scalarfield, vectorfield, velocityfield!, project!, maxdiv
 
 end

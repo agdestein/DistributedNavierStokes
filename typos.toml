@@ -1,0 +1,3 @@
+[default.extend-identifiers]
+# Staggered-stencil shorthand: u at the east face
+ue = "ue"
