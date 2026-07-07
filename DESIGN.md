@@ -15,8 +15,11 @@ AFiD, and the extreme-scale wall-flow solver of the CaNS group
 
 Goals:
 
-- DNS of homogeneous isotropic turbulence (HIT) and turbulent channel flow at
-  grid sizes of 2000³-4000³, on 8-128 NVIDIA GPUs (CUDA-aware MPI / NCCL).
+- DNS of turbulent channel flow at grid sizes of 2000³-4000³, on 8-128
+  NVIDIA GPUs (CUDA-aware MPI / NCCL). The fully periodic case (HIT) is
+  supported as the degenerate no-wall configuration (§2), but production HIT
+  DNS is delegated to a separate pseudo-spectral solver built on the same
+  pencil/FFT layer (§2, §7).
 - Energy-conserving (symmetry-preserving) discretization, 2nd and 4th order
   (Verstappen & Veldman 2003).
 - Pressure Poisson equation solved *exactly* (to machine precision) per step
@@ -42,7 +45,46 @@ Non-goals (deliberately discarded relative to INS.jl):
 - At most **one wall-normal direction** (canonically y). This is what keeps
   the Poisson problem "FFT × FFT × banded direct solve". Ducts are
   explicitly out of scope; do not half-design for them.
-- Planned extension (design seam only, not v1): passive scalar / Boussinesq
+### Relation to pseudo-spectral HIT
+
+For a fully periodic box, pseudo-spectral is the superior method and the
+community standard: spectral accuracy needs roughly half the points per
+direction (≈ 8× fewer total) than 2nd-order FD for the same resolved
+spectra, with exact differentiation and projection. (Per-step communication
+actually favors FD — pseudo-spectral does ~9-15 distributed 3D FFTs per RK
+substep vs. FD's halo exchanges + one ~4-transpose Poisson solve — but that
+does not buy back the resolution penalty.) This solver therefore does **not**
+aim to be the production HIT-DNS code.
+
+The fully periodic configuration is kept anyway, because:
+
+1. **Near-zero design cost.** It is the degenerate case of the channel
+   machinery: all ghost fillers become MPI/periodic copies, and the y-pencil
+   stage of the Poisson solve swaps the banded LU for a local FFT +
+   pointwise division (the periodic stencil is circulant, also at 4th
+   order). A functor swap; no new communication patterns.
+2. **It is the primary test configuration**: inviscid energy conservation,
+   decomposition invariance, order verification (Taylor-Green), spectra
+   cross-checks against INS.jl — needed for CI regardless of users.
+3. **FD-HIT is a research object in itself** for discretization-consistent
+   LES closures: when the physical-space discretization is the point, an FD
+   DNS reference on the same stencils is what a-posteriori evaluation needs.
+
+Production spectral HIT: a separate pseudo-spectral solver, which is ~90%
+pencil/transpose/FFT infrastructure — exactly §4/§5/§7 of this design.
+**Design consequence:** the layout/transpose/FFT layer stays solver-agnostic
+(its API never mentions Navier-Stokes) and is a candidate for its own
+package, amortizing the get-right-first-time component over both solvers.
+
+Honest footnote: the spectral-where-possible logic partially applies to the
+channel too (the Lee-Moser reference databases are Fourier × B-spline). FD
+symmetry-preserving is chosen deliberately anyway: GPU locality, non-uniform
+grids, semi-implicit diffusion, and continuity with the Verstappen-Veldman
+research line — the same trade CaNS and AFiD made.
+
+### Planned extensions
+
+- Design seam only, not v1: passive scalar / Boussinesq
   temperature. Fits the BC scope exactly (Rayleigh-Bénard = periodic x, z +
   walls y) and reuses all machinery. The scalar transport kernel slot should
   exist in the time stepper from the start.
@@ -319,4 +361,6 @@ meaningless). Three modes, all launched as ordinary `mpiexec -n N` runs:
   (memory/compute trade, §5/§8).
 - Whether PencilArrays.jl survives under the layout abstraction after
   benchmarking, or is prototype-only scaffolding (§7).
+- When to split the layout/transpose/FFT layer into its own package for
+  reuse by the companion pseudo-spectral HIT solver (§2).
 - Scalar transport (Boussinesq) timing: v1.x, once channel is validated.
