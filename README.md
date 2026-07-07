@@ -28,13 +28,18 @@ Implemented and tested (CPU backend, multi-rank via mpiexec):
   RK3, CFL-adaptive stepping, constant body force.
 - Decomposition invariance: identical trajectories (≤ 1e-11) across rank
   counts and processor grids.
+- In-situ statistics: plane/time-averaged channel profiles (`channelstats`
+  / `channelprofiles`) and shell-binned energy spectra (`spectrumstats` /
+  `energyspectrum`, reusing the pencil FFTs); both decomposition-invariant.
 - Single-GPU runs (`backend = CUDABackend()`): verified on an RTX 4090,
   matching CPU trajectories to machine precision. Rank-local communication
-  uses device copies, so a single GPU rank needs no CUDA-aware MPI;
-  multi-rank GPU runs do (or, later, an NCCL transport).
+  uses device copies, so a single GPU rank needs no CUDA-aware MPI.
+- Multi-rank GPU over CUDA-aware MPI: verified with 2 and 4 ranks sharing
+  one RTX 4090 (system Open MPI 5 + UCX `cuda_ipc`), identical results
+  across processor grids. See below for setup.
 
-Not yet: multi-GPU validation on real hardware, 4th-order scheme,
-semi-implicit y-diffusion, statistics, checkpointing, NCCL transport.
+Not yet: multi-*device* validation on real hardware, 4th-order scheme,
+semi-implicit y-diffusion, checkpointing, NCCL transport.
 See CODE_DESIGN.md §15.
 
 ## Quickstart
@@ -56,6 +61,34 @@ u = vectorfield(s)
 velocityfield!(u, s; x = (x, y, z) -> 1 - y^2)
 solve!(; u, setup = s, tlims = (0.0, 10.0), processors = (; log = DistributedNavierStokes.logger(; nupdate = 10)))
 ```
+
+## Multi-GPU runs (CUDA-aware MPI)
+
+`examples/channel.jl` is a complete multi-rank channel run (CPU or GPU;
+picks one device per rank per node, ranks share a device when
+oversubscribed). One-time setup pointing MPI.jl at a CUDA-aware system MPI:
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.resolve(); using MPIPreferences; MPIPreferences.use_system_binary()'
+mpiexec -n 4 julia --project=examples examples/channel.jl
+```
+
+Requirements: an MPI built with CUDA support (`MPI.has_cuda()` must be
+`true` *after* `MPI.Init()` — Open MPI 5 loads its CUDA accelerator
+component at runtime). Verify with
+`julia --project=examples -e 'using MPI; MPI.Init(); println(MPI.has_cuda())'`.
+
+Cluster notes (e.g. Snellius):
+
+- Load a CUDA-aware MPI module and rerun `MPIPreferences.use_system_binary()`
+  on the cluster; launch with `srun`/`mpiexec`, one rank per GPU.
+- **MIG partitions** (`gpu_mig`): each MIG slice of an A100 appears as its
+  own CUDA device, so a few slices give a cheap *correctness* test of the
+  multi-device path (one rank per slice). Caveats: MIG instances have no
+  peer-to-peer access — CUDA-aware MPI stages transfers through host memory
+  (fine for correctness, meaningless for bandwidth) — and NCCL does not
+  support communication across MIG instances, so a future NCCL transport
+  cannot be tested there.
 
 ## Tests
 
