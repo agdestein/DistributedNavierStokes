@@ -1,0 +1,21 @@
+name = "DistributedNavierStokes"
+uuid = "f64655ff-a0fc-45af-b814-374c85e154ca"
+authors = ["Syver Døving Agdestein <syverda@gmail.com> and contributors"]
+version = "0.1.0"
+
+[deps]
+AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+
+[compat]
+AbstractFFTs = "1"
+FFTW = "1"
+KernelAbstractions = "0.9"
+LinearAlgebra = "1"
+MPI = "0.20"
+Printf = "1"
+julia = "1.10"
