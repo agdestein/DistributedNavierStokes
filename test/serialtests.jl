@@ -100,6 +100,44 @@ end
     @test 3 < err[1] / err[2] < 5   # second order in space
 end
 
+@testset "energy spectrum" begin
+    s = setup(; n = (16, 16, 16), visc = 0.0, comm = MPI.COMM_SELF)
+    u = randomfield!(vectorfield(s), s)
+    p = scalarfield(s)
+    project!(u, p, s)
+    sp = spectrumstats(s)
+    sp.sample((; u, p, t = 0.0, n = 0), s)
+    (; E) = energyspectrum(sp, s)
+    V = prod(l -> l[2] - l[1], s.lims)
+    @test sum(E) ≈ DNS.kinetic_energy(u, s) / V rtol = 1e-12   # Parseval
+
+    utg = vectorfield(s)
+    velocityfield!(
+        utg,
+        s;
+        x = (x, y, z) -> sin(x) * cos(y),
+        y = (x, y, z) -> -cos(x) * sin(y),
+    )
+    sptg = spectrumstats(s)
+    sptg.sample((; u = utg, p, t = 0.0, n = 0), s)
+    Etg = energyspectrum(sptg, s).E
+    @test Etg[2] / sum(Etg) ≈ 1 rtol = 1e-12   # Taylor-Green: all energy in shell κ = 1
+end
+
+@testset "channel statistics (exact laminar)" begin
+    s = channelsetup()
+    u = vectorfield(s)
+    velocityfield!(u, s; x = (x, y, z) -> 1 - y^2)
+    cs = channelstats(s)
+    cs.sample((; u, p = nothing, t = 0.0, n = 0), s)
+    prof = channelprofiles(cs, s)
+    @test prof.U ≈ 1 .- prof.y .^ 2 atol = 1e-13
+    @test maximum(abs, prof.uu) < 1e-13
+    @test maximum(abs, prof.uv) < 1e-13
+    @test length(prof.U) == s.n[2]
+    @test length(prof.uv) == s.n[2] - 1
+end
+
 @testset "channel flow sanity" begin
     s = channelsetup(; visc = 0.05, bodyforce = (1.0, 0.0, 0.0))
     u = vectorfield(s)

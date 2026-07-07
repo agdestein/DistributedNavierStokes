@@ -165,5 +165,7 @@ function griddata(n, lims, bc, stretch, lay, w, backend, T)
         zc = [lims[3][1] + (k - 1 / 2) * Lz / nz for k in lay.ranges[3]],
         Δye,                               # global extended (host), for Poisson setup
         Δyue,
+        ycg = yce[(w+1):(w+ny)],           # global cell centers (host), for profiles
+        yfg = yfe[(w+1):(w+ny+1)],         # global faces 0:ny (host)
     )
 end

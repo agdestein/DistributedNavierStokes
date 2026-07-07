@@ -165,19 +165,26 @@ function runcase(bcy, comm, procgrid)
         y = (x, y, z) -> (1 - y^2) * sin(2x),
         z = (x, y, z) -> cos(x) * sin(z) + 0.1 * sin(2y),
     )
-    st = solve!(; u, setup = s, tlims = (0.0, 0.05), Δt = 0.01)
-    u, s, st
+    acc = bcy == :wall ? channelstats(s; nupdate = 2) : spectrumstats(s; nupdate = 2)
+    solve!(; u, setup = s, tlims = (0.0, 0.05), Δt = 0.01, processors = (; acc.sample))
+    stats = bcy == :wall ? channelprofiles(acc, s) : energyspectrum(acc, s)
+    u, s, stats
 end
 
 @testset "decomposition invariance n=$nranks pg=$pg bc=$bcy" for pg in procgrids(nranks),
     bcy in (:periodic, :wall)
 
-    upar, spar, _ = runcase(bcy, comm, pg)
-    user, sser, _ = runcase(bcy, MPI.COMM_SELF, (1, 1))   # full grid on every rank
+    upar, spar, statpar = runcase(bcy, comm, pg)
+    user, sser, statser = runcase(bcy, MPI.COMM_SELF, (1, 1))   # full grid on every rank
     for c in (:x, :y, :z)
         mine = Array(DNS.interior(upar[c], spar.w))
         ref = view(DNS.interior(user[c], sser.w), spar.lay.ranges...)
         @test maximum(abs, mine .- ref) < 1e-11
     end
     @test maxdiv(upar, spar) < 1e-12
+    # statistics are decomposition-invariant too
+    for f in propertynames(statpar)
+        f == :nsamples && continue
+        @test maximum(abs, getproperty(statpar, f) .- getproperty(statser, f)) < 1e-11
+    end
 end

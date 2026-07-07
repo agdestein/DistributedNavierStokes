@@ -22,8 +22,10 @@ include("operators.jl")
 include("timestep.jl")
 include("setup.jl")
 include("fields.jl")
+include("stats.jl")
 
 export setup, solve!, exchange_halo!
 export scalarfield, vectorfield, velocityfield!, project!, maxdiv
+export channelstats, channelprofiles, spectrumstats, energyspectrum
 
 end
