@@ -62,7 +62,9 @@ function exchange_halo!(φ, stag, setup)
         hiinterior = facebox(d, (nl+1):(nl+w), ext)
         loghost = facebox(d, 1:w, ext)
         highost = facebox(d, (nl+w+1):(nl+2w), ext)
-        if a == 0 # dimension local to this rank
+        selfperiodic =
+            a != 0 && topo.neighbors[a].lo == topo.rank && topo.neighbors[a].hi == topo.rank
+        if a == 0 || selfperiodic # dimension (effectively) local to this rank
             if bc[d] == :periodic
                 copybox!(φ, loghost, φ, hiinterior, backend)
                 copybox!(φ, highost, φ, lointerior, backend)
@@ -70,6 +72,10 @@ function exchange_halo!(φ, stag, setup)
                 fill_wall!(φ, stag, :lo, setup)
                 fill_wall!(φ, stag, :hi, setup)
             end
+        elseif topo.neighbors[a] == (; lo = MPI.PROC_NULL, hi = MPI.PROC_NULL)
+            # single rank along a wall axis: no MPI at all
+            fill_wall!(φ, stag, :lo, setup)
+            fill_wall!(φ, stag, :hi, setup)
         else
             (; lo, hi) = topo.neighbors[a]
             nb = prod(length, loghost)

@@ -28,10 +28,14 @@ Implemented and tested (CPU backend, multi-rank via mpiexec):
   RK3, CFL-adaptive stepping, constant body force.
 - Decomposition invariance: identical trajectories (≤ 1e-11) across rank
   counts and processor grids.
+- Single-GPU runs (`backend = CUDABackend()`): verified on an RTX 4090,
+  matching CPU trajectories to machine precision. Rank-local communication
+  uses device copies, so a single GPU rank needs no CUDA-aware MPI;
+  multi-rank GPU runs do (or, later, an NCCL transport).
 
-Not yet: GPU CI runs (kernels are KernelAbstractions, `CUDABackend()`
-should work), 4th-order scheme, semi-implicit y-diffusion, statistics,
-checkpointing, NCCL transport. See CODE_DESIGN.md §15.
+Not yet: multi-GPU validation on real hardware, 4th-order scheme,
+semi-implicit y-diffusion, statistics, checkpointing, NCCL transport.
+See CODE_DESIGN.md §15.
 
 ## Quickstart
 

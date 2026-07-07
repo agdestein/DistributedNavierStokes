@@ -65,6 +65,13 @@ kernels are asynchronous, and MPI must not touch a buffer a kernel is still
 writing (or read one a kernel is still reading).
 """
 function transpose!(dst, src, plan, backend)
+    if length(plan.sendcounts) == 1
+        # Single rank along this axis: a device copy, no MPI (also makes
+        # slab runs and single-GPU runs work without GPU-aware MPI).
+        copybox!(dst, plan.recvboxes[1], src, plan.sendboxes[1], backend)
+        KernelAbstractions.synchronize(backend)
+        return
+    end
     pack!(plan.sendbuf, src, plan.sendboxes, backend)
     KernelAbstractions.synchronize(backend)
     MPI.Alltoallv!(
