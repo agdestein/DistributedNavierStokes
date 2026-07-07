@@ -18,6 +18,9 @@ Keywords:
 - `visc = 1e-3`: kinematic viscosity.
 - `bodyforce = (0, 0, 0)`: constant body force (e.g. channel driving).
 - `procgrid = nothing`: 2D processor grid; default near-square.
+- `ydiffusion = :explicit`: `:implicit` treats wall-normal diffusion with
+  per-stage Crank-Nicolson (walls only), removing the `Δy²ₘᵢₙ` time-step
+  limit on stretched grids.
 - `order = 2`: discretization order (4 not implemented yet).
 - `backend = CPU()`: KernelAbstractions backend (e.g. `CUDABackend()`).
 - `T = Float64`: element type.
@@ -31,6 +34,7 @@ function setup(;
     visc = 1e-3,
     bodyforce = (0.0, 0.0, 0.0),
     procgrid = nothing,
+    ydiffusion = :explicit,
     order = 2,
     backend = CPU(),
     T = Float64,
@@ -38,8 +42,11 @@ function setup(;
 )
     bc[1] == bc[3] == :periodic || error("x and z must be periodic")
     bc[2] in (:periodic, :wall) || error("bc[2] must be :periodic or :wall")
+    ydiffusion in (:explicit, :implicit) ||
+        error("ydiffusion must be :explicit or :implicit")
     order == 2 || error("only order 2 is implemented so far")
     w = order ÷ 2
+    imexy = ydiffusion == :implicit
 
     MPI.Initialized() || MPI.Init()
     nranks = MPI.Comm_size(comm)
@@ -86,8 +93,11 @@ function setup(;
         ranges,
         halo,
         rk = rk3,
+        imexy,
+        εy = T(imexy ? 0 : 1),   # y-diffusion factor in the explicit kernel
     )
-    (; s..., poisson = plan_poisson(s))
+    s = (; s..., poisson = plan_poisson(s))
+    imexy ? (; s..., ydiff = plan_ydiffusion(s)) : s
 end
 
 "Near-square factorization `(p1, p2)` of `P` with `p1 ≥ p2`."

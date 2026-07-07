@@ -317,9 +317,17 @@ end
   needs valid halos, which the end of the previous substage guarantees.
 - `Δt` from CFL: local `maximum(abs, u.x ./ Δx) ...` (mapreduce on the
   device) + `MPI.Allreduce(max)`. Recomputed every `n_cfl` steps.
-- The semi-implicit-y seam: `step!` is selected at setup
-  (`step_explicit!` / later `step_imex!`); the IMEX variant inserts three
-  y-Helmholtz solves reusing `solve_y!` machinery. Nothing else changes.
+- Semi-implicit y-diffusion (implemented; `ydiffusion = :implicit`):
+  per-stage Crank-Nicolson in the Spalart-Moser-Rogers delta form with
+  incremental (lagged) pressure projection. Two structural rules proved
+  load-bearing during implementation: the CN average must involve the
+  *old* stage velocity (averaging the explicitly-updated field drops the
+  coupling to first order), and the lagged pressure gradient must be
+  applied outside the RK register with weight exactly `α Δt` (routing it
+  through `q` overweights increments by `B/α` and destabilizes the
+  pressure iteration). The tridiagonal solves use a y-local layout
+  `axes = (2, 0, 1)` adjacent to the native one (single-axis transpose,
+  a device copy when `p₂ = 1`).
 
 ## 12. User-facing API
 
@@ -409,5 +417,5 @@ Layer-by-layer, mostly on the CPU backend with `mpiexec -n {1,2,4,8}`:
 - `procgrid = :auto` beyond the near-square heuristic: a benchmark script
   timing the 4-transpose pipeline over candidate grids, output pasted into
   the config (replaces cuDecomp autotuning).
-- IMEX y-diffusion (`step_imex!`), scalar transport slot in `momentum!`,
-  HDF5 checkpoint extension, FP32 field mode.
+- Scalar transport slot in `momentum!`, HDF5 checkpoint extension,
+  FP32 field mode, 4th-order scheme (halo width, banded Poisson).

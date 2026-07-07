@@ -138,6 +138,41 @@ end
     @test length(prof.uv) == s.n[2] - 1
 end
 
+@testset "implicit y-diffusion" begin
+    # trajectories agree with the explicit scheme to O(Δt²)
+    function runwith(yd, Δt)
+        s = channelsetup(; visc = 0.05, bodyforce = (1.0, 0.0, 0.0), ydiffusion = yd)
+        u = vectorfield(s)
+        velocityfield!(u, s; x = (x, y, z) -> (1 - y^2) * (1 + 0.1 * sin(2x) * cos(z)))
+        solve!(; u, setup = s, tlims = (0.0, 0.2), Δt)
+        u, s
+    end
+    d = map((0.004, 0.002)) do Δt
+        ue, _ = runwith(:explicit, Δt)
+        ui, si = runwith(:implicit, Δt)
+        @test maxdiv(ui, si) < 1e-12
+        maximum(maximum(abs, Array(ue[c]) .- Array(ui[c])) for c in (:x, :y, :z))
+    end
+    @test d[1] < 1e-6
+    @test 3 < d[1] / d[2] < 5   # second order in time
+
+    # stable far beyond the explicit viscous limit Δt ~ Δy²ₘᵢₙ/(2ν)
+    s = channelsetup(;
+        n = (8, 48, 8),
+        stretch = tanhstretch(2.5),
+        visc = 0.2,
+        bodyforce = (1.0, 0.0, 0.0),
+        ydiffusion = :implicit,
+    )
+    Δt = 5e-3   # ≈ 200× the explicit limit on this grid
+    u = vectorfield(s)
+    velocityfield!(u, s; x = (x, y, z) -> (1 - y^2) * (1 + 0.1 * sin(2x)))
+    solve!(; u, setup = s, tlims = (0.0, 1.0), Δt)
+    @test all(c -> all(isfinite, Array(u[c])), (:x, :y, :z))
+    @test DNS.kinetic_energy(u, s) < 100
+    @test maxdiv(u, s) < 1e-12
+end
+
 @testset "channel flow sanity" begin
     s = channelsetup(; visc = 0.05, bodyforce = (1.0, 0.0, 0.0))
     u = vectorfield(s)

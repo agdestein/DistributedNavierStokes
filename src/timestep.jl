@@ -2,8 +2,16 @@
 # registers: the velocity `u` and one accumulator `q`), with a pressure
 # projection after every stage.
 
-"Low-storage RK3 coefficients (Williamson): `q ← A q + Δt F(u); u ← u + B q`."
-const rk3 = (; A = (0.0, -5 / 9, -153 / 128), B = (1 / 3, 15 / 16, 8 / 15))
+"""
+Low-storage RK3 coefficients (Williamson): `q ← A q + Δt F(u); u ← u + B q`.
+`α` are the effective stage time fractions (`B q = α Δt F` for constant
+`F`), used by the per-stage Crank-Nicolson diffusion.
+"""
+const rk3 = (;
+    A = (0.0, -5 / 9, -153 / 128),
+    B = (1 / 3, 15 / 16, 8 / 15),
+    α = (1 / 3, 5 / 12, 1 / 4),
+)
 
 "Interior (ghost-free) view of a ghosted field."
 interior(φ, w) = view(φ, ntuple(d -> (w+1):(size(φ, d)-w), 3)...)
@@ -22,18 +30,35 @@ function project!(u, ψ, setup)
     exchange_halo!(u, setup)
 end
 
-"One RK3 step of size `Δt`. `u` must have valid halos (maintained)."
-function step!(u, p, q, setup, Δt)
-    (; w, ranges, backend) = setup
-    for (A, B) in zip(setup.rk.A, setup.rk.B)
+"""
+One RK3 step of size `Δt`. `u` (and `p` in semi-implicit mode) must have
+valid halos (maintained). In semi-implicit mode `p` is the lagged pressure
+(units of pressure per stage time): its gradient is part of the explicit
+right-hand side and each stage's projection solves only for the increment
+`δ`, which keeps the pressure-splitting error of the Crank-Nicolson
+y-diffusion at second order. In explicit mode `δ` may alias `p`.
+"""
+function step!(u, p, q, δ, setup, Δt)
+    (; ranges) = setup
+    for (A, B, α) in zip(setup.rk.A, setup.rk.B, setup.rk.α)
         momentum!(q, u, A, Δt, setup)
-        for (c, φ) in pairs(u)
-            r = ranges[c]
-            v = view(φ, r...)
-            @. v += B * $view(q[c], r...)
+        if setup.imexy
+            imex_update!(u, q, p, B, α, Δt, setup)
+            exchange_halo!(u, setup)
+            project!(u, δ, setup)
+            rp = ranges.p
+            vp = view(p, rp...)
+            @. vp += $view(δ, rp...) / (α * Δt)
+            exchange_halo!(p, :p, setup)
+        else
+            for (c, φ) in pairs(u)
+                r = ranges[c]
+                v = view(φ, r...)
+                @. v += B * $view(q[c], r...)
+            end
+            exchange_halo!(u, setup)
+            project!(u, p, setup)
         end
-        exchange_halo!(u, setup)
-        project!(u, p, setup)
     end
 end
 
@@ -49,7 +74,8 @@ function cfl_timestep(u, setup; cfl)
         grid.Δymin / (maximum(abs, interior(u.y, w)) + ϵ),
         grid.Δz / (maximum(abs, interior(u.z, w)) + ϵ),
     )
-    diff = 1 / (2 * visc * (1 / grid.Δx^2 + 1 / grid.Δymin^2 + 1 / grid.Δz^2) + ϵ)
+    invΔy2 = setup.imexy ? zero(T) : 1 / grid.Δymin^2   # y-diffusion is implicit
+    diff = 1 / (2 * visc * (1 / grid.Δx^2 + invΔy2 + 1 / grid.Δz^2) + ϵ)
     MPI.Allreduce(min(cfl * conv, cfl * diff), min, topo.cart)
 end
 
@@ -66,15 +92,16 @@ Returns the final state.
 function solve!(; u, setup, tlims, Δt = nothing, cfl = 0.5, processors = (;))
     p = scalarfield(setup)
     q = vectorfield(setup)
+    δ = setup.imexy ? scalarfield(setup) : p   # projection increment
     exchange_halo!(u, setup)
-    project!(u, p, setup)
+    project!(u, δ, setup)
     t, tend = float.(tlims)
     n = 0
     state = (; u, p, t, n)
     foreach(proc -> proc(state, setup), processors)
     while t < tend - 1e-10 * (abs(tend) + 1)
         Δtn = min(something(Δt, cfl_timestep(u, setup; cfl)), tend - t)
-        step!(u, p, q, setup, Δtn)
+        step!(u, p, q, δ, setup, Δtn)
         t += Δtn
         n += 1
         state = (; u, p, t, n)

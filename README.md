@@ -37,10 +37,15 @@ Implemented and tested (CPU backend, multi-rank via mpiexec):
 - Multi-rank GPU over CUDA-aware MPI: verified with 2 and 4 ranks sharing
   one RTX 4090 (system Open MPI 5 + UCX `cuda_ipc`), identical results
   across processor grids. See below for setup.
+- Semi-implicit wall-normal diffusion (`ydiffusion = :implicit`):
+  per-stage Crank-Nicolson in SMR delta form with incremental (lagged)
+  pressure projection — second-order in time, removes the `Δy²ₘᵢₙ` limit
+  (verified stable at 200× the explicit viscous limit), decomposition
+  invariant, GPU-verified. Tridiagonal solves run in a y-local layout one
+  transpose away from the native one (a device copy when `p₂ = 1`).
 
 Not yet: multi-*device* validation on real hardware, 4th-order scheme,
-semi-implicit y-diffusion, checkpointing, NCCL transport.
-See CODE_DESIGN.md §15.
+checkpointing, NCCL transport. See CODE_DESIGN.md §15.
 
 ## Quickstart
 

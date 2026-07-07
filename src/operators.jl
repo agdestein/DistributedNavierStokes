@@ -58,6 +58,7 @@ end
     fx,
     fy,
     fz,
+    εy,
     o1,
     o2,
     o3,
@@ -83,7 +84,7 @@ end
             (wt * ut - wb * ub) / Δz
         diff =
             (ux[I+1, J, K] - 2 * ux[I, J, K] + ux[I-1, J, K]) / Δx^2 +
-            (
+            εy * (
                 (ux[I, J+1, K] - ux[I, J, K]) / Δyu[J] -
                 (ux[I, J, K] - ux[I, J-1, K]) / Δyu[J-1]
             ) / Δy[J] +
@@ -108,7 +109,7 @@ end
             (wtv * vt - wbv * vb) / Δz
         diff =
             (uy[I+1, J, K] - 2 * uy[I, J, K] + uy[I-1, J, K]) / Δx^2 +
-            (
+            εy * (
                 (uy[I, J+1, K] - uy[I, J, K]) / Δy[J+1] -
                 (uy[I, J, K] - uy[I, J-1, K]) / Δy[J]
             ) / Δyu[J] +
@@ -134,7 +135,7 @@ end
             (wct * wct - wcb * wcb) / Δz
         diff =
             (uz[I+1, J, K] - 2 * uz[I, J, K] + uz[I-1, J, K]) / Δx^2 +
-            (
+            εy * (
                 (uz[I, J+1, K] - uz[I, J, K]) / Δyu[J] -
                 (uz[I, J, K] - uz[I, J-1, K]) / Δyu[J-1]
             ) / Δy[J] +
@@ -144,11 +145,12 @@ end
 end
 
 """
-Runge-Kutta register update `q ← A q + Δt F(u)` with the full momentum
+Runge-Kutta register update `q ← A q + Δt F(u)` with the momentum
 right-hand side `F` (convection + diffusion + body force), fused into one
-kernel over all three components. `u` must have valid halos. The x/z
-components are updated on the cell range (faces ≡ cells in periodic
-directions); the inactive top wall face of `u.y` is skipped via `jymax`.
+kernel over all three components. In semi-implicit mode `F` excludes the
+y-diffusion (`εy = 0`). `u` must have valid halos. The x/z components are
+updated on the cell range (faces ≡ cells in periodic directions); the
+inactive top wall face of `u.y` is skipped via `jymax`.
 """
 function momentum!(q, u, A, Δt, setup)
     (; grid, visc, bodyforce, ranges, backend) = setup
@@ -168,46 +170,51 @@ function momentum!(q, u, A, Δt, setup)
         grid.Δy,
         grid.Δyu,
         bodyforce...,
+        setup.εy,
         map(r -> first(r) - 1, rng)...,
         last(ranges.y[2]);
         ndrange = map(length, rng),
     )
 end
 
-@kernel function pgradx_kernel!(ux, @Const(p), Δx, o1, o2, o3)
+@kernel function pgradx_kernel!(ux, @Const(p), Δx, s, o1, o2, o3)
     i, j, k = @index(Global, NTuple)
     I, J, K = i + o1, j + o2, k + o3
-    @inbounds ux[I, J, K] -= (p[I+1, J, K] - p[I, J, K]) / Δx
+    @inbounds ux[I, J, K] -= s * (p[I+1, J, K] - p[I, J, K]) / Δx
 end
 
-@kernel function pgrady_kernel!(uy, @Const(p), @Const(Δyu), o1, o2, o3)
+@kernel function pgrady_kernel!(uy, @Const(p), @Const(Δyu), s, o1, o2, o3)
     i, j, k = @index(Global, NTuple)
     I, J, K = i + o1, j + o2, k + o3
-    @inbounds uy[I, J, K] -= (p[I, J+1, K] - p[I, J, K]) / Δyu[J]
+    @inbounds uy[I, J, K] -= s * (p[I, J+1, K] - p[I, J, K]) / Δyu[J]
 end
 
-@kernel function pgradz_kernel!(uz, @Const(p), Δz, o1, o2, o3)
+@kernel function pgradz_kernel!(uz, @Const(p), Δz, s, o1, o2, o3)
     i, j, k = @index(Global, NTuple)
     I, J, K = i + o1, j + o2, k + o3
-    @inbounds uz[I, J, K] -= (p[I, J, K+1] - p[I, J, K]) / Δz
+    @inbounds uz[I, J, K] -= s * (p[I, J, K+1] - p[I, J, K]) / Δz
 end
 
 """
-Subtract the staggered pressure gradient from `u` on active DOFs only —
-wall faces are boundary values and keep `u.y = 0`, which is exactly the
+`φ ← φ - s ∂p/∂c` for velocity component `c`, on active DOFs only — wall
+faces are boundary values and keep `u.y = 0`, which is exactly the
 homogeneous Neumann condition built into the Poisson operator. `p` must
 have valid halos.
 """
-function pressuregrad_update!(u, p, setup)
+function pressuregrad_component!(φ, p, c, s, setup)
     (; grid, ranges, backend) = setup
-    launch(kernel!, φ, extra, rng) = kernel!(backend)(
-        φ,
-        p,
-        extra,
-        map(r -> first(r) - 1, rng)...;
-        ndrange = map(length, rng),
-    )
-    launch(pgradx_kernel!, u.x, grid.Δx, ranges.x)
-    launch(pgrady_kernel!, u.y, grid.Δyu, ranges.y)
-    launch(pgradz_kernel!, u.z, grid.Δz, ranges.z)
+    rng = ranges[c]
+    o = map(r -> first(r) - 1, rng)
+    ndr = map(length, rng)
+    if c == :x
+        pgradx_kernel!(backend)(φ, p, grid.Δx, s, o...; ndrange = ndr)
+    elseif c == :y
+        pgrady_kernel!(backend)(φ, p, grid.Δyu, s, o...; ndrange = ndr)
+    else
+        pgradz_kernel!(backend)(φ, p, grid.Δz, s, o...; ndrange = ndr)
+    end
 end
+
+"Subtract the staggered pressure gradient from `u` (active DOFs only)."
+pressuregrad_update!(u, p, setup) =
+    foreach(c -> pressuregrad_component!(u[c], p, c, one(setup.T), setup), (:x, :y, :z))

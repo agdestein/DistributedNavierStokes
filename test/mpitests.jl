@@ -155,8 +155,8 @@ end
 
 # -------------------------------------------- decomposition invariance
 
-function runcase(bcy, comm, procgrid)
-    s = casesetup(bcy; comm, procgrid, visc = 0.02, bodyforce = (0.5, 0.0, 0.0))
+function runcase(bcy, comm, procgrid; kwargs...)
+    s = casesetup(bcy; comm, procgrid, visc = 0.02, bodyforce = (0.5, 0.0, 0.0), kwargs...)
     u = vectorfield(s)
     velocityfield!(
         u,
@@ -171,11 +171,12 @@ function runcase(bcy, comm, procgrid)
     u, s, stats
 end
 
-@testset "decomposition invariance n=$nranks pg=$pg bc=$bcy" for pg in procgrids(nranks),
-    bcy in (:periodic, :wall)
+@testset "decomposition invariance n=$nranks pg=$pg bc=$bcy yd=$yd" for pg in
+                                                                        procgrids(nranks),
+    (bcy, yd) in ((:periodic, :explicit), (:wall, :explicit), (:wall, :implicit))
 
-    upar, spar, statpar = runcase(bcy, comm, pg)
-    user, sser, statser = runcase(bcy, MPI.COMM_SELF, (1, 1))   # full grid on every rank
+    upar, spar, statpar = runcase(bcy, comm, pg; ydiffusion = yd)
+    user, sser, statser = runcase(bcy, MPI.COMM_SELF, (1, 1); ydiffusion = yd)
     for c in (:x, :y, :z)
         mine = Array(DNS.interior(upar[c], spar.w))
         ref = view(DNS.interior(user[c], sser.w), spar.lay.ranges...)
