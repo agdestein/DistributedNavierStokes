@@ -2,6 +2,8 @@
 
 Status: draft, July 2026.
 Author: Syver Døving Agdestein (with Claude).
+Code-level design (abstractions, API, communication layer):
+[CODE_DESIGN.md](CODE_DESIGN.md).
 
 This document records the design choices for a new MPI-parallelized,
 GPU-resident DNS solver for the incompressible Navier-Stokes equations. It is
@@ -357,8 +359,9 @@ meaningless). Three modes, all launched as ordinary `mpiexec -n N` runs:
 - Package/repo name (current name is a placeholder).
 - Processor-grid configuration UX: explicit in config vs. benchmark-script
   autotune output.
-- Per-mode banded factorization storage vs. on-the-fly factorization
-  (memory/compute trade, §5/§8).
+- ~~Per-mode banded factorization storage vs. on-the-fly factorization~~ —
+  resolved: on-the-fly per-thread coefficients from 1D data
+  (CODE_DESIGN.md §9); memory wins, the sweep is bandwidth-bound anyway.
 - Whether PencilArrays.jl survives under the layout abstraction after
   benchmarking, or is prototype-only scaffolding (§7).
 - When to split the layout/transpose/FFT layer into its own package for

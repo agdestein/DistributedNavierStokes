@@ -8,4 +8,6 @@ single GPU (> 800³). Companion project to
 [IncompressibleNavierStokes.jl](https://github.com/agdestein/IncompressibleNavierStokes.jl),
 which remains the single-node, differentiable, methods-research code.
 
-See [DESIGN.md](DESIGN.md) for the design document and decision log.
+See [DESIGN.md](DESIGN.md) for the design document and decision log, and
+[CODE_DESIGN.md](CODE_DESIGN.md) for the code-level design (abstractions,
+API, communication layer).
