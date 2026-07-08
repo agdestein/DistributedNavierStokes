@@ -21,6 +21,11 @@ Keywords:
 - `ydiffusion = :explicit`: `:implicit` treats wall-normal diffusion with
   per-stage Crank-Nicolson (walls only), removing the `Δy²ₘᵢₙ` time-step
   limit on stretched grids.
+- `mpibuf = :auto`: `:device` passes GPU buffers straight to MPI (requires
+  CUDA-aware MPI); `:host` stages every MPI message through host mirrors
+  (works with any MPI, e.g. on MIG slices where CUDA IPC is unsupported).
+  `:auto` picks `:device` when `MPI.has_cuda()` reports support, `:host`
+  otherwise; on the CPU backend no staging is ever done.
 - `order = 2`: discretization order (4 not implemented yet).
 - `backend = CPU()`: KernelAbstractions backend (e.g. `CUDABackend()`).
 - `T = Float64`: element type.
@@ -35,6 +40,7 @@ function setup(;
     bodyforce = (0.0, 0.0, 0.0),
     procgrid = nothing,
     ydiffusion = :explicit,
+    mpibuf = :auto,
     order = 2,
     backend = CPU(),
     T = Float64,
@@ -44,11 +50,14 @@ function setup(;
     bc[2] in (:periodic, :wall) || error("bc[2] must be :periodic or :wall")
     ydiffusion in (:explicit, :implicit) ||
         error("ydiffusion must be :explicit or :implicit")
+    mpibuf in (:auto, :device, :host) || error("mpibuf must be :auto, :device, or :host")
     order == 2 || error("only order 2 is implemented so far")
     w = order ÷ 2
     imexy = ydiffusion == :implicit
 
     MPI.Initialized() || MPI.Init()
+    stagehost =
+        mpibuf == :host || (mpibuf == :auto && !(backend isa CPU) && !MPI.has_cuda())
     nranks = MPI.Comm_size(comm)
     procgrid = something(procgrid, squarest(nranks))
 
@@ -74,6 +83,8 @@ function setup(;
     halo = (;
         sendbuf = KernelAbstractions.allocate(backend, T, nhalo),
         recvbuf = KernelAbstractions.allocate(backend, T, nhalo),
+        hostsendbuf = stagehost ? Vector{T}(undef, nhalo) : nothing,
+        hostrecvbuf = stagehost ? Vector{T}(undef, nhalo) : nothing,
     )
 
     s = (;
@@ -95,6 +106,7 @@ function setup(;
         rk = rk3,
         imexy,
         εy = T(imexy ? 0 : 1),   # y-diffusion factor in the explicit kernel
+        stagehost,
     )
     s = (; s..., poisson = plan_poisson(s))
     imexy ? (; s..., ydiff = plan_ydiffusion(s)) : s

@@ -171,12 +171,19 @@ function runcase(bcy, comm, procgrid; kwargs...)
     u, s, stats
 end
 
-@testset "decomposition invariance n=$nranks pg=$pg bc=$bcy yd=$yd" for pg in
-                                                                        procgrids(nranks),
-    (bcy, yd) in ((:periodic, :explicit), (:wall, :explicit), (:wall, :implicit))
+@testset "decomposition invariance n=$nranks pg=$pg bc=$bcy yd=$yd mb=$mb" for pg in
+                                                                               procgrids(
+        nranks,
+    ),
+    (bcy, yd, mb) in (
+        (:periodic, :explicit, :device),
+        (:wall, :explicit, :device),
+        (:wall, :explicit, :host),   # host-staged MPI buffers
+        (:wall, :implicit, :device),
+    )
 
-    upar, spar, statpar = runcase(bcy, comm, pg; ydiffusion = yd)
-    user, sser, statser = runcase(bcy, MPI.COMM_SELF, (1, 1); ydiffusion = yd)
+    upar, spar, statpar = runcase(bcy, comm, pg; ydiffusion = yd, mpibuf = mb)
+    user, sser, statser = runcase(bcy, MPI.COMM_SELF, (1, 1); ydiffusion = yd, mpibuf = mb)
     for c in (:x, :y, :z)
         mine = Array(DNS.interior(upar[c], spar.w))
         ref = view(DNS.interior(user[c], sser.w), spar.lay.ranges...)

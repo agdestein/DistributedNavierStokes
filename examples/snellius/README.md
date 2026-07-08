@@ -46,11 +46,17 @@ Gotchas encoded in the scripts:
   support (ranks would all come up as rank 0 of size 1).
 - `--gpus-per-task=1` (A100/H100): gives each rank its own
   `CUDA_VISIBLE_DEVICES` entry, one rank per GPU.
-- `UCX_TLS=^cuda_ipc` (MIG only): CUDA IPC is not supported on MIG devices;
-  transfers stage through the host instead. Full GPUs keep IPC/NVLink.
+- `DNS_MPIBUF=host` (all scripts, July 2026): passes `mpibuf = :host` to
+  `setup` — every MPI message is staged through host mirrors. The
+  device-buffer path segfaults in `ucp_memcpy_pack`: the UCX 1.18 module
+  ignores `UCX_MEMTYPE_CACHE=n` (visible as an "unused environment
+  variables" UCX warning), so buffers allocated by CUDA.jl — which UCX's
+  allocation hooks cannot intercept — are misclassified as host memory.
+  This crashes on full A100s too, not just MIG. On MIG host staging is
+  needed regardless (no CUDA IPC there at all).
 - `JULIA_CUDA_MEMORY_POOL=none`: avoids UCX registration issues with the
   stream-ordered pool; costs nothing since the time loop allocates nothing.
 
 The example prints one line per rank with the device name and UUID — on
-A100/H100 verify the four UUIDs are distinct — plus
-`CUDA-aware MPI = true` from rank 0.
+A100/H100 verify the four UUIDs are distinct — plus the CUDA-awareness and
+buffer mode from rank 0.

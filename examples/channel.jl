@@ -37,11 +37,13 @@ s = setup(;
     stretch = t -> (tanh(1.5 * (2t - 1)) / tanh(1.5) + 1) / 2,
     visc = 1 / 180,
     bodyforce = (1.0, 0.0, 0.0),
+    mpibuf = Symbol(get(ENV, "DNS_MPIBUF", "auto")),
     backend,
 )
 rank == 0 && println(
     "ranks = $(MPI.Comm_size(comm)), procgrid = $(s.topo.procgrid), " *
-    "backend = $backend, CUDA-aware MPI = $(MPI.has_cuda())",
+    "backend = $backend, CUDA-aware MPI = $(MPI.has_cuda()), " *
+    "MPI buffers = $(s.stagehost ? "host-staged" : "device")",
 )
 
 u = vectorfield(s)

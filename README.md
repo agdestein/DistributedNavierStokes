@@ -78,10 +78,13 @@ julia --project=examples -e 'using Pkg; Pkg.resolve(); using MPIPreferences; MPI
 mpiexec -n 4 julia --project=examples examples/channel.jl
 ```
 
-Requirements: an MPI built with CUDA support (`MPI.has_cuda()` must be
-`true` *after* `MPI.Init()` — Open MPI 5 loads its CUDA accelerator
-component at runtime). Verify with
-`julia --project=examples -e 'using MPI; MPI.Init(); println(MPI.has_cuda())'`.
+GPU buffers are passed straight to MPI when the library reports CUDA
+support (`MPI.has_cuda()` is `true` *after* `MPI.Init()` — Open MPI 5
+loads its CUDA accelerator component at runtime); otherwise every message
+is staged through host mirrors, which works with any MPI. Override with
+`setup(; mpibuf = :device)` or `:host` — the latter is also the workaround
+when the MPI/UCX stack *claims* CUDA support but mishandles device buffers
+(seen on Snellius, where UCX cannot intercept CUDA.jl's allocations).
 
 Cluster notes:
 

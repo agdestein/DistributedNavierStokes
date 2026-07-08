@@ -63,8 +63,8 @@ function plan_poisson(s)
     âx = KernelAbstractions.allocate(backend, Complex{T}, lxc.ldims)
     âz = KernelAbstractions.allocate(backend, Complex{T}, lzc.ldims)
     ây = KernelAbstractions.allocate(backend, Complex{T}, lyc.ldims)
-    xz = plan_transpose(lxc, lzc, topo, backend, Complex{T})
-    zy = plan_transpose(lzc, lyc, topo, backend, Complex{T})
+    xz = plan_transpose(lxc, lzc, topo, backend, Complex{T}; s.stagehost)
+    zy = plan_transpose(lzc, lyc, topo, backend, Complex{T}; s.stagehost)
     base = (;
         r,
         âx,

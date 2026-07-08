@@ -10,12 +10,13 @@
 # Cheapest cluster smoke test: the gpu_mig QOS caps every job at one MIG
 # slice (cpu=9, gpu=1, node=1), so a multi-slice job is not possible —
 # instead 4 MPI ranks share the single a100_3g.20gb slice (oversubscribed
-# single-device mode). This still exercises srun/PMIx, CUDA-aware MPI, and
-# the device kernels. For a real multi-device test use a100.sh or h100.sh.
+# single-device mode). This still exercises srun/PMIx, MPI, and the device
+# kernels. For a real multi-device test use a100.sh or h100.sh.
 #
-# CUDA IPC is not supported on MIG devices: disable UCX's cuda_ipc
-# transport so device buffers stage through the host.
-export UCX_TLS=^cuda_ipc
+# CUDA IPC is not supported on MIG devices and UCX mishandles device
+# buffers there (segfault in ucp_memcpy_pack), so stage MPI messages
+# through host mirrors — the solver's built-in fallback.
+export DNS_MPIBUF=host
 
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0
 

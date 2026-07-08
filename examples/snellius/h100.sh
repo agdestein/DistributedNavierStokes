@@ -8,7 +8,14 @@
 #SBATCH --output=smoke-h100-%j.out
 
 # Smoke test on 4 full H100s (one node; 16 cores per GPU = fair share).
-# Full GPUs have peer access, so UCX's cuda_ipc transport stays enabled.
+#
+# The device-buffer MPI path currently segfaults on Snellius: the UCX
+# 1.18 module ignores UCX_MEMTYPE_CACHE=n (reported as an "unused
+# environment variable"), so UCX misclassifies Julia's CUDA allocations
+# as host memory and host-memcpys them (crash in ucp_memcpy_pack). Stage
+# MPI messages through host mirrors until that is fixed; delete this to
+# retest the device path.
+export DNS_MPIBUF=host
 
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0
 

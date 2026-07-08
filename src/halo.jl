@@ -48,6 +48,32 @@ end
 facebox(d, r, ext) = ntuple(i -> i == d ? r : (1:ext[i]), 3)
 
 """
+Sendrecv the first `nb` elements of the halo staging buffers, through the
+host mirrors when the MPI library cannot handle device buffers.
+"""
+function halo_sendrecv!(halo, nb, comm; dest, source)
+    if halo.hostsendbuf === nothing
+        MPI.Sendrecv!(
+            view(halo.sendbuf, 1:nb),
+            view(halo.recvbuf, 1:nb),
+            comm;
+            dest,
+            source,
+        )
+    else
+        copyto!(halo.hostsendbuf, 1, halo.sendbuf, 1, nb)
+        MPI.Sendrecv!(
+            view(halo.hostsendbuf, 1:nb),
+            view(halo.hostrecvbuf, 1:nb),
+            comm;
+            dest,
+            source,
+        )
+        copyto!(halo.recvbuf, 1, halo.hostrecvbuf, 1, nb)
+    end
+end
+
+"""
 Fill all ghost layers of `φ` with staggering `stag ∈ (:x, :y, :z, :p)`:
 MPI exchange with neighbor ranks, periodic wrap where a periodic dimension
 is rank-local, and wall fills where the topology has no neighbor.
@@ -79,17 +105,16 @@ function exchange_halo!(φ, stag, setup)
         else
             (; lo, hi) = topo.neighbors[a]
             nb = prod(length, loghost)
-            sendbuf = view(halo.sendbuf, 1:nb)
             recvbuf = view(halo.recvbuf, 1:nb)
             # hi-ward: my top interior slab becomes hi's lo ghosts
-            pack!(sendbuf, φ, (hiinterior,), backend)
+            pack!(view(halo.sendbuf, 1:nb), φ, (hiinterior,), backend)
             KernelAbstractions.synchronize(backend)
-            MPI.Sendrecv!(sendbuf, recvbuf, topo.cart; dest = hi, source = lo)
+            halo_sendrecv!(halo, nb, topo.cart; dest = hi, source = lo)
             lo == MPI.PROC_NULL || unpack!(φ, recvbuf, (loghost,), backend)
             # lo-ward: my bottom interior slab becomes lo's hi ghosts
-            pack!(sendbuf, φ, (lointerior,), backend)
+            pack!(view(halo.sendbuf, 1:nb), φ, (lointerior,), backend)
             KernelAbstractions.synchronize(backend)
-            MPI.Sendrecv!(sendbuf, recvbuf, topo.cart; dest = lo, source = hi)
+            halo_sendrecv!(halo, nb, topo.cart; dest = lo, source = hi)
             hi == MPI.PROC_NULL || unpack!(φ, recvbuf, (highost,), backend)
             if bc[d] == :wall
                 lo == MPI.PROC_NULL && fill_wall!(φ, stag, :lo, setup)

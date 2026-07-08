@@ -55,7 +55,7 @@ function plan_ydiffusion(s)
     (; n, bc, T, backend, topo, lay) = s
     bc[2] == :wall || error("implicit y-diffusion requires bc[2] == :wall")
     yl = layout(n, (2, 0, 1), topo.procgrid, topo.coords)
-    plan = plan_transpose(lay, yl, topo, backend, T)
+    plan = plan_transpose(lay, yl, topo, backend, T; s.stagehost)
     (;
         yl,
         plan,

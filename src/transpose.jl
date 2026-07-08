@@ -20,8 +20,10 @@ Precompute a transpose plan from layout `src` to layout `dst` (adjacent
 orientations of the same global array). Send/receive boxes are in local
 array indices; buffers are contiguous with peer segments in subcommunicator
 rank order (= processor-grid coordinate order along the swapped axis).
+With `stagehost = true` the plan carries host mirrors of the buffers and
+the MPI call goes through them (for MPI libraries without device support).
 """
-function plan_transpose(src, dst, topo, backend, T)
+function plan_transpose(src, dst, topo, backend, T; stagehost = false)
     @assert src.gdims == dst.gdims
     a = swapped_axis(src, dst)
     (; procgrid, coords) = topo
@@ -44,6 +46,8 @@ function plan_transpose(src, dst, topo, backend, T)
         recvcounts,
         sendbuf = KernelAbstractions.allocate(backend, T, sum(sendcounts)),
         recvbuf = KernelAbstractions.allocate(backend, T, sum(recvcounts)),
+        hostsendbuf = stagehost ? Vector{T}(undef, sum(sendcounts)) : nothing,
+        hostrecvbuf = stagehost ? Vector{T}(undef, sum(recvcounts)) : nothing,
     )
 end
 
@@ -56,6 +60,8 @@ reverse_plan(p) = (;
     recvcounts = p.sendcounts,
     sendbuf = p.recvbuf,
     recvbuf = p.sendbuf,
+    hostsendbuf = p.hostrecvbuf,
+    hostrecvbuf = p.hostsendbuf,
 )
 
 """
@@ -74,11 +80,21 @@ function transpose!(dst, src, plan, backend)
     end
     pack!(plan.sendbuf, src, plan.sendboxes, backend)
     KernelAbstractions.synchronize(backend)
-    MPI.Alltoallv!(
-        MPI.VBuffer(plan.sendbuf, plan.sendcounts),
-        MPI.VBuffer(plan.recvbuf, plan.recvcounts),
-        plan.subcomm,
-    )
+    if plan.hostsendbuf === nothing
+        MPI.Alltoallv!(
+            MPI.VBuffer(plan.sendbuf, plan.sendcounts),
+            MPI.VBuffer(plan.recvbuf, plan.recvcounts),
+            plan.subcomm,
+        )
+    else
+        copyto!(plan.hostsendbuf, plan.sendbuf)
+        MPI.Alltoallv!(
+            MPI.VBuffer(plan.hostsendbuf, plan.sendcounts),
+            MPI.VBuffer(plan.hostrecvbuf, plan.recvcounts),
+            plan.subcomm,
+        )
+        copyto!(plan.recvbuf, plan.hostrecvbuf)
+    end
     unpack!(dst, plan.recvbuf, plan.recvboxes, backend)
     KernelAbstractions.synchronize(backend)
 end
