@@ -29,23 +29,28 @@ nodes.)
 Then, from the repository root:
 
 ```sh
-sbatch examples/snellius/mig.sh    # 4 MIG slices, cheapest multi-device test
-sbatch examples/snellius/a100.sh   # 4 full A100s
+sbatch examples/snellius/mig.sh    # 4 ranks sharing 1 MIG slice, cheapest
+sbatch examples/snellius/a100.sh   # 4 full A100s, cheapest multi-device test
 sbatch examples/snellius/h100.sh   # 4 full H100s
 ```
+
+Note the gpu_mig QOS caps every job at one MIG slice (cpu=9, gpu=1,
+node=1), so a multi-slice job is not possible there: the MIG script runs 4
+MPI ranks oversubscribed on one slice, which still exercises srun/PMIx,
+CUDA-aware MPI, and the device kernels. The cheapest *multi-device* test is
+the A100 script (~90 SBU for 15 min).
 
 Gotchas encoded in the scripts:
 
 - `srun --mpi=pmix`: the cluster default is pmi2, which Open MPI 5 does not
   support (ranks would all come up as rank 0 of size 1).
-- `--gpus-per-task=1`: gives each rank its own `CUDA_VISIBLE_DEVICES`. On
-  MIG this is essential — a process can only use one MIG slice, and with
-  several visible all ranks would enumerate the same first slice.
-- `UCX_TLS=^cuda_ipc` (MIG only): CUDA IPC does not work across MIG slices;
+- `--gpus-per-task=1` (A100/H100): gives each rank its own
+  `CUDA_VISIBLE_DEVICES` entry, one rank per GPU.
+- `UCX_TLS=^cuda_ipc` (MIG only): CUDA IPC is not supported on MIG devices;
   transfers stage through the host instead. Full GPUs keep IPC/NVLink.
 - `JULIA_CUDA_MEMORY_POOL=none`: avoids UCX registration issues with the
   stream-ordered pool; costs nothing since the time loop allocates nothing.
 
-The example prints one line per rank with the device name and UUID — on MIG
-verify the four UUIDs are distinct — plus `CUDA-aware MPI = true` from
-rank 0.
+The example prints one line per rank with the device name and UUID — on
+A100/H100 verify the four UUIDs are distinct — plus
+`CUDA-aware MPI = true` from rank 0.

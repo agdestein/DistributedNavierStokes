@@ -2,15 +2,19 @@
 #SBATCH --job-name=dns-smoke-mig
 #SBATCH --partition=gpu_mig
 #SBATCH --ntasks=4
-#SBATCH --gpus-per-task=1
-#SBATCH --cpus-per-task=9
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=2
 #SBATCH --time=00:15:00
 #SBATCH --output=smoke-mig-%j.out
 
-# Smoke test on 4 MIG slices (a100_3g.20gb, 9 cores each = 1/8 node per
-# task). MIG slices are separate CUDA devices *without* peer access or CUDA
-# IPC between them, so disable UCX's cuda_ipc transport; device buffers
-# then stage through the host, which is fine for correctness testing.
+# Cheapest cluster smoke test: the gpu_mig QOS caps every job at one MIG
+# slice (cpu=9, gpu=1, node=1), so a multi-slice job is not possible —
+# instead 4 MPI ranks share the single a100_3g.20gb slice (oversubscribed
+# single-device mode). This still exercises srun/PMIx, CUDA-aware MPI, and
+# the device kernels. For a real multi-device test use a100.sh or h100.sh.
+#
+# CUDA IPC is not supported on MIG devices: disable UCX's cuda_ipc
+# transport so device buffers stage through the host.
 export UCX_TLS=^cuda_ipc
 
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0
@@ -23,6 +27,4 @@ export JULIA_CUDA_MEMORY_POOL=none
 
 cd "$SLURM_SUBMIT_DIR"
 # Slurm's default here is pmi2, which Open MPI 5 does not support.
-# --gpus-per-task=1 gives each rank its own CUDA_VISIBLE_DEVICES entry;
-# without it all ranks would enumerate the *same* first MIG slice.
 srun --mpi=pmix julia --project=examples examples/channel.jl
