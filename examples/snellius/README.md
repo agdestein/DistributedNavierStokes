@@ -14,7 +14,13 @@ julia --project=examples -e 'using Pkg; Pkg.resolve(); Pkg.precompile()'
 This writes `examples/LocalPreferences.toml` (gitignored): MPI.jl uses the
 system CUDA-aware Open MPI, and CUDA.jl uses the module's CUDA 12.8 toolkit
 (no artifact download, guaranteed to match the MPI build). The job scripts
-load the same module — keep the two in sync.
+load the same module — keep the two in sync. Then append the MIG
+workaround (see gotchas below) and precompile once more:
+
+```sh
+printf '\n[CUDACore]\nnonblocking_synchronization = false\n' >> examples/LocalPreferences.toml
+julia --project=examples -e 'using Pkg; Pkg.precompile()'
+```
 
 Precompile caches are shared across the differing node architectures via
 `JULIA_CPU_TARGET` (set identically in `~/.bashrc` and the job scripts):
@@ -48,12 +54,20 @@ Gotchas encoded in the scripts:
   `CUDA_VISIBLE_DEVICES` entry, one rank per GPU.
 - `DNS_MPIBUF=host` (all scripts, July 2026): passes `mpibuf = :host` to
   `setup` — every MPI message is staged through host mirrors. The
-  device-buffer path segfaults in `ucp_memcpy_pack`: the UCX 1.18 module
-  ignores `UCX_MEMTYPE_CACHE=n` (visible as an "unused environment
-  variables" UCX warning), so buffers allocated by CUDA.jl — which UCX's
-  allocation hooks cannot intercept — are misclassified as host memory.
-  This crashes on full A100s too, not just MIG. On MIG host staging is
-  needed regardless (no CUDA IPC there at all).
+  device-buffer path is broken on this cluster: the UCX 1.18 module cannot
+  classify CUDA.jl device memory (its allocation hooks can't intercept
+  Julia, and it ignores `UCX_MEMTYPE_CACHE=n` — visible as an "unused
+  environment variables" UCX warning), so some host-only transport always
+  ends up touching a device pointer. Observed on full A100s and MIG alike:
+  eager path segfaults in `ucp_memcpy_pack`; forcing rendezvous
+  (`UCX_RNDV_THRESH=0`) passes a toy sendrecv but the solver then dies in
+  CMA (`process_vm_readv ... Bad address`); `OMPI_MCA_pml=ob1` and the
+  GCC OpenMPI builds crash too. Worth re-testing after SURF updates the
+  UCX module.
+- `[CUDACore] nonblocking_synchronization = false` in
+  `examples/LocalPreferences.toml` (CUDACore is in the project `[extras]`
+  so the preference resolves): CUDA.jl's nonblocking-synchronization
+  worker thread segfaults on MIG slices after a few hundred steps.
 - `JULIA_CUDA_MEMORY_POOL=none`: avoids UCX registration issues with the
   stream-ordered pool; costs nothing since the time loop allocates nothing.
 
