@@ -7,3 +7,8 @@ MPIPreferences = "3da0fdf6-3ccc-4f1b-acd9-58baa6c99267"
 
 [sources]
 DistributedNavierStokes = {path = ".."}
+
+# So LocalPreferences.toml can address the indirect dependency CUDACore
+# (e.g. nonblocking_synchronization = false, needed on Snellius MIG).
+[extras]
+CUDACore = "bd0ed864-bdfe-4181-a5ed-ce625a5fdea2"
