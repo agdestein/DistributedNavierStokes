@@ -23,6 +23,8 @@ backend = if CUDA.functional()
     # oversubscribed (single-GPU testing mode)
     nodecomm = MPI.Comm_split_type(comm, MPI.COMM_TYPE_SHARED, rank)
     CUDA.device!(MPI.Comm_rank(nodecomm) % length(CUDA.devices()))
+    dev = CUDA.device()
+    println("rank $rank: $(CUDA.name(dev)) ($(CUDA.uuid(dev)))")
     CUDABackend()
 else
     CPU()
@@ -38,7 +40,8 @@ s = setup(;
     backend,
 )
 rank == 0 && println(
-    "ranks = $(MPI.Comm_size(comm)), procgrid = $(s.topo.procgrid), backend = $backend",
+    "ranks = $(MPI.Comm_size(comm)), procgrid = $(s.topo.procgrid), " *
+    "backend = $backend, CUDA-aware MPI = $(MPI.has_cuda())",
 )
 
 u = vectorfield(s)
