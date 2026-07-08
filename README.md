@@ -83,17 +83,18 @@ Requirements: an MPI built with CUDA support (`MPI.has_cuda()` must be
 component at runtime). Verify with
 `julia --project=examples -e 'using MPI; MPI.Init(); println(MPI.has_cuda())'`.
 
-Cluster notes (e.g. Snellius):
+Cluster notes:
 
-- Load a CUDA-aware MPI module and rerun `MPIPreferences.use_system_binary()`
-  on the cluster; launch with `srun`/`mpiexec`, one rank per GPU.
-- **MIG partitions** (`gpu_mig`): each MIG slice of an A100 appears as its
-  own CUDA device, so a few slices give a cheap *correctness* test of the
-  multi-device path (one rank per slice). Caveats: MIG instances have no
-  peer-to-peer access — CUDA-aware MPI stages transfers through host memory
-  (fine for correctness, meaningless for bandwidth) — and NCCL does not
-  support communication across MIG instances, so a future NCCL transport
-  cannot be tested there.
+- On clusters, also pin CUDA.jl to the module toolkit so precompilation
+  works on GPU-less login nodes and matches the MPI build:
+  `CUDA.set_runtime_version!(v"12.8"; local_toolkit = true)`.
+- **Snellius**: ready-made setup instructions and job scripts (MIG, A100,
+  H100) live in [examples/snellius](examples/snellius/README.md).
+- **MIG partitions**: MIG slices are separate CUDA devices, but scheduler
+  QOS typically caps jobs at one slice (as on Snellius), and MIG supports
+  neither CUDA IPC nor peer access nor NCCL — so MIG is only good for
+  cheap oversubscribed single-device smoke tests; use full GPUs for
+  multi-device tests.
 
 ## Tests
 
