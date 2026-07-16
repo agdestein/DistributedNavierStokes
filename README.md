@@ -49,6 +49,33 @@ Implemented and tested (CPU backend, multi-rank via mpiexec):
 Not yet: multi-*device* validation on real hardware, 4th-order scheme,
 checkpointing, NCCL transport. See CODE_DESIGN.md §15.
 
+**Pseudo-spectral HIT solver** ([DESIGN_SPECTRAL.md](DESIGN_SPECTRAL.md)),
+sharing the pencil/transpose layer — implemented and tested:
+
+- Truncation-aware distributed rfft pipeline: the spectral state holds only
+  2/3-rule retained modes (y-pencil, `(kcut+1, m, m)`, `m = 2kcut+1`); dead
+  modes are never stored, packed, or communicated (per-peer transpose boxes
+  split at the pos/neg frequency boundary), and the three field components
+  travel batched in one `Alltoallv`.
+- Wray low-storage RK3 with integrating-factor viscosity (exact diffusion,
+  no viscous CFL limit); convection in divergence form, dealiased by
+  construction. Third-order self-convergence verified; single-rank
+  trajectories match the SymmetryCode single-GPU solver.
+- Prescribed-spectrum random ICs from counter-based (splitmix64) physical
+  noise — Hermitian symmetry automatic, fields identical for every rank
+  count. Taylor-Green ICs; shell-clamp forcing; K41 statistics and
+  shell-binned spectra via `Allreduce`.
+- Tests (`test/spectralmpitests.jl`): distributed transforms ≡ serial FFTW,
+  exact 2D-in-3D Taylor-Green decay, inviscid energy conservation,
+  decomposition invariance of full forced trajectories (1-4 ranks, all
+  processor grids, host-staged buffers). GPU: single-device runs and 2-4
+  ranks sharing an RTX 4090 over CUDA-aware MPI match CPU to 1e-15.
+- Example: `examples/spectral_hit.jl`.
+
+Spectral not yet: checkpoint/restart (MPI-IO), filtered-field/SFS output in
+the SymmetryCode schemas, 2D slices, Snellius validation — DESIGN_SPECTRAL.md
+§8, §11 phases 4-5.
+
 ## Quickstart
 
 ```julia

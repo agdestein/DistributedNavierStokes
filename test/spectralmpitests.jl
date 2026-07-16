@@ -124,6 +124,37 @@ end
     @test spectral_maxdiv(uh, s) < 1e-13
 end
 
+@testset "spectral random IC + forcing n=$nranks pg=$pg" for pg in procgrids(nranks)
+    function runforced(comm, procgrid)
+        s = spectral_setup(; n = 18, visc = 5e-3, comm, procgrid)
+        uh = specvelocity(s)
+        spectral_randomfield!(uh, s; totalenergy = 0.4, kpeak = 2, seed = 7)
+        f = shellforcing(uh, s; shells = 1:2)
+        spectral_solve!(; uh, setup = s, tlims = (0.0, 0.1), Δt = 0.01, forcing = f)
+        spec_to_phys!(s.fft.v, uh, s)
+        s, uh, Array(s.fft.v)
+    end
+    spar, uhpar, vpar = runforced(comm, pg)
+    sser, uhser, vser = runforced(MPI.COMM_SELF, (1, 1))
+    # The counter-based IC makes the whole forced trajectory
+    # decomposition-invariant, not just the operators.
+    ref = vser[spar.lphys.ranges[1], spar.lphys.ranges[2], spar.lphys.ranges[3], :]
+    @test maximum(abs, vpar .- ref) < 1e-12
+    # IC diagnostics
+    s0 = spectral_setup(; n = 18, visc = 5e-3, comm, procgrid = pg)
+    uh0 = specvelocity(s0)
+    spectral_randomfield!(uh0, s0; totalenergy = 0.4, kpeak = 2, seed = 7)
+    @test spectral_energy(uh0, s0) ≈ 0.4
+    @test spectral_maxdiv(uh0, s0) < 1e-14
+    sp = spectral_spectrum(uh0, s0)
+    kdiag = floor(Int, sqrt(3) * s0.kcut)
+    prof = [k^4 * exp(-2 * (k / 2)^2) for k = 0:kdiag]
+    target = 0.4 .* prof ./ sum(prof)
+    @test maximum(abs, sp.E .- target[1:(s0.kcut+1)]) < 1e-13
+    # forced shells hold their reference energy through the run
+    @test shell_energies(uhpar, spar, 1:2) ≈ shell_energies(uh0, s0, 1:2)
+end
+
 @testset "spectral host-staged buffers n=$nranks" begin
     s = spectral_setup(; n = 12, comm, mpibuf = :host)
     uh = specvelocity(s)

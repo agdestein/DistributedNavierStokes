@@ -28,13 +28,16 @@ include("spectral/fft.jl")
 include("spectral/operators.jl")
 include("spectral/step.jl")
 include("spectral/setup.jl")
+include("spectral/forcing.jl")
 include("spectral/ic.jl")
+include("spectral/stats.jl")
 
 export setup, solve!, exchange_halo!
 export scalarfield, vectorfield, velocityfield!, project!, maxdiv
 export channelstats, channelprofiles, spectrumstats, energyspectrum
 export spectral_setup, spectral_solve!, specvelocity, spectral_velocityfield!,
-    taylorgreen!, spectral_project!, spectral_energy, spectral_dissipation,
-    spectral_maxdiv, spec_to_phys!, phys_to_spec!
+    taylorgreen!, spectral_randomfield!, spectral_project!, spectral_energy,
+    spectral_dissipation, spectral_maxdiv, spectral_stats, spectral_spectrum,
+    shellforcing, shell_energies, spec_to_phys!, phys_to_spec!
 
 end

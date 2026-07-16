@@ -1,6 +1,8 @@
 # Design document: distributed pseudo-spectral HIT solver
 
-Status: draft, July 2026.
+Status: July 2026 — phases 1-3 of §11 implemented (`src/spectral/`,
+CPU + GPU + multi-rank tested; see README status); phases 4-6 (I/O,
+Snellius, optimizations) pending.
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)

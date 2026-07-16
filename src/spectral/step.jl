@@ -78,15 +78,26 @@ function spectral_step!(uh, s, Δt, cache)
 end
 
 """
-    spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3, processors = (;))
+    spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3,
+                    forcing = nothing, processors = (;))
 
 Integrate the spectral state `uh` from `tlims[1]` to `tlims[2]`. The initial
 field is projected. `Δt = nothing` means CFL-adaptive stepping (convective
 limit only — viscosity is exact); the velocity maximum is lagged by one
-step. Each processor is called as `proc(state, setup)` after every step
-(and once initially) with `state = (; uh, t, n)`. Returns the final state.
+step. `forcing` is a mutating hook `forcing(uh, setup)` applied after every
+step (e.g. [`shellforcing`](@ref)). Each processor is called as
+`proc(state, setup)` after every step (and once initially) with
+`state = (; uh, t, n)`. Returns the final state.
 """
-function spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3, processors = (;))
+function spectral_solve!(;
+    uh,
+    setup,
+    tlims,
+    Δt = nothing,
+    cfl = 0.3,
+    forcing = nothing,
+    processors = (;),
+)
     s = setup
     (; T, topo) = s
     cache = (; ustart = specvelocity(s), du = specvelocity(s))
@@ -107,6 +118,7 @@ function spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3, processor
     while t < tend - 1e-10 * (abs(tend) + 1)
         Δtn = min(something(Δt, T(cfl) * h / (vmax + ϵ)), tend - t)
         vloc = spectral_step!(uh, s, T(Δtn), cache)
+        isnothing(forcing) || forcing(uh, s)
         isnothing(Δt) && (vmax = MPI.Allreduce(vloc, max, topo.cart))
         t += Δtn
         n += 1

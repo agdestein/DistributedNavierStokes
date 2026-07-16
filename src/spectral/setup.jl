@@ -83,6 +83,12 @@ function spectral_setup(;
     kx = todevice(backend, T[kfac * (gi - 1) for gi in lspec.ranges[1]])
     ky = todevice(backend, T[kfac * compactfreq(j, m, kcut) for j in lspec.ranges[2]])
     kz = todevice(backend, T[kfac * compactfreq(gk, m, kcut) for gk in lspec.ranges[3]])
+    # Integer counterparts (for exact shell binning) and the rfft
+    # double-count weight of dim 1 (kx = 0 once, kx > 0 twice).
+    ikx = todevice(backend, Int32[gi - 1 for gi in lspec.ranges[1]])
+    iky = todevice(backend, Int32[compactfreq(j, m, kcut) for j in lspec.ranges[2]])
+    ikz = todevice(backend, Int32[compactfreq(gk, m, kcut) for gk in lspec.ranges[3]])
+    w1 = todevice(backend, T[gi == 1 ? 1 : 2 for gi in lspec.ranges[1]])
 
     (;
         n,
@@ -102,6 +108,10 @@ function spectral_setup(;
         kxr = reshape(kx, :, 1, 1),
         kyr = reshape(ky, 1, :, 1),
         kzr = reshape(kz, 1, 1, :),
+        ikxr = reshape(ikx, :, 1, 1),
+        ikyr = reshape(iky, 1, :, 1),
+        ikzr = reshape(ikz, 1, 1, :),
+        w1r = reshape(w1, :, 1, 1),
         # local kx > 0 rows (counted twice in spectral sums)
         dbl = (first(lspec.ranges[1]) == 1 ? 2 : 1):lspec.ldims[1],
         fft = (;
