@@ -26,12 +26,13 @@ MPI.Init()
         end
     end
 
-    mpitests = joinpath(@__DIR__, "mpitests.jl")
     project = Base.active_project()
     env = copy(ENV)
     env["OMPI_MCA_rmaps_base_oversubscribe"] = "true" # ignored by non-OpenMPI
-    @testset "mpiexec -n $n" for n in (1, 2, 4)
-        cmd = `$(MPI.mpiexec()) -n $n $(Base.julia_cmd()) --startup-file=no --project=$project $mpitests`
+    @testset "mpiexec -n $n $(basename(f))" for n in (1, 2, 4),
+        f in (joinpath(@__DIR__, "mpitests.jl"), joinpath(@__DIR__, "spectralmpitests.jl"))
+
+        cmd = `$(MPI.mpiexec()) -n $n $(Base.julia_cmd()) --startup-file=no --project=$project $f`
         @test success(run(setenv(ignorestatus(cmd), env)))
     end
 end

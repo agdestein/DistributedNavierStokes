@@ -1,0 +1,132 @@
+# Setup for the pseudo-spectral solver: cubic periodic box, transform grid
+# n³, spectral state truncated at the 2/3 cutoff. One nested NamedTuple
+# holding the decomposition, all layouts, FFT plans, transpose plans, and
+# preallocated buffers; the time loop allocates nothing.
+
+"""
+    spectral_setup(; n, kwargs...)
+
+Set up a pseudo-spectral problem on a cubic periodic box with `n` transform
+grid points per direction (even). The spectral state holds only the
+retained modes `|k| ≤ kcut` (2/3 rule: `kcut = n ÷ 3`), in the y-pencil
+orientation; physical fields live on the transform grid in x-pencils.
+
+Keywords:
+
+- `l = 2π`: box side length.
+- `visc = 1e-3`: kinematic viscosity.
+- `kcut = n ÷ 3`: truncation wavenumber (alias-free needs `3kcut ≤ n`).
+- `procgrid = nothing`: 2D processor grid; default near-square. Slabs
+  `(P, 1)` make the z→y stage communication-free.
+- `mpibuf = :auto`: as in [`setup`](@ref).
+- `backend = CPU()`: KernelAbstractions backend (e.g. `CUDABackend()`).
+- `T = Float64`: element type.
+- `comm = MPI.COMM_WORLD`: MPI communicator to decompose over.
+"""
+function spectral_setup(;
+    n,
+    l = 2π,
+    visc = 1e-3,
+    kcut = n ÷ 3,
+    procgrid = nothing,
+    mpibuf = :auto,
+    backend = CPU(),
+    T = Float64,
+    comm = MPI.COMM_WORLD,
+)
+    n % 2 == 0 || error("n must be even")
+    1 ≤ kcut || error("kcut must be at least 1")
+    3kcut ≤ n || error("aliasing: 3kcut ≤ n is required (2/3 rule)")
+    mpibuf in (:auto, :device, :host) || error("mpibuf must be :auto, :device, or :host")
+
+    MPI.Initialized() || MPI.Init()
+    stagehost =
+        mpibuf == :host || (mpibuf == :auto && !(backend isa CPU) && !MPI.has_cuda())
+    nranks = MPI.Comm_size(comm)
+    procgrid = something(procgrid, squarest(nranks))
+    topo = topology(comm, procgrid, (true, true))
+
+    m = 2kcut + 1
+    nb = 3
+    lphys = layout((n, n, n), AXES.x, procgrid, topo.coords)
+    lxt = layout((kcut + 1, n, n), AXES.x, procgrid, topo.coords)
+    lzf = layout((kcut + 1, n, n), AXES.z, procgrid, topo.coords)
+    lzt = layout((kcut + 1, n, m), AXES.z, procgrid, topo.coords)
+    lyt = layout((kcut + 1, n, m), AXES.y, procgrid, topo.coords)
+    lspec = layout((kcut + 1, m, m), AXES.y, procgrid, topo.coords)
+    for lay in (lphys, lxt, lzf, lspec)
+        all(>(0), lay.ldims) ||
+            error("empty local block (procgrid $procgrid too large for n = $n, kcut = $kcut)")
+    end
+
+    alloc(dims...) = KernelAbstractions.allocate(backend, Complex{T}, dims...)
+    v = KernelAbstractions.zeros(backend, T, lphys.ldims..., nb)
+    rbuf = KernelAbstractions.allocate(backend, T, lphys.ldims..., nb)
+    âx = alloc(n ÷ 2 + 1, lphys.ldims[2], lphys.ldims[3], nb)
+    âz = alloc(lzf.ldims..., nb)
+    ây = alloc(lyt.ldims..., nb)
+    σh = alloc(lspec.ldims..., nb)
+    escratch = KernelAbstractions.allocate(backend, T, lspec.ldims...)
+
+    xz = plan_spectral_transpose(
+        lxt, lzf, topo, backend, T;
+        nb, srcdim3 = size(âx, 3), dstdim3 = n, stagehost,
+    )
+    zy = plan_spectral_transpose(
+        lzt, lyt, topo, backend, T;
+        nb, srcdim3 = n, dstdim3 = lyt.ldims[3],
+        splitsrc = (kcut, m, n), stagehost,
+    )
+
+    # Physical wavenumbers of the state layout's local ranges.
+    kfac = T(2π / l)
+    kx = todevice(backend, T[kfac * (gi - 1) for gi in lspec.ranges[1]])
+    ky = todevice(backend, T[kfac * compactfreq(j, m, kcut) for j in lspec.ranges[2]])
+    kz = todevice(backend, T[kfac * compactfreq(gk, m, kcut) for gk in lspec.ranges[3]])
+
+    (;
+        n,
+        l = T(l),
+        visc = T(visc),
+        kcut,
+        m,
+        T,
+        backend,
+        topo,
+        stagehost,
+        lphys,
+        lspec,
+        kx,
+        ky,
+        kz,
+        kxr = reshape(kx, :, 1, 1),
+        kyr = reshape(ky, 1, :, 1),
+        kzr = reshape(kz, 1, 1, :),
+        # local kx > 0 rows (counted twice in spectral sums)
+        dbl = (first(lspec.ranges[1]) == 1 ? 2 : 1):lspec.ldims[1],
+        fft = (;
+            nb,
+            v,
+            rbuf,
+            âx,
+            âz,
+            ây,
+            σh,
+            escratch,
+            rplan = plan_rfft(rbuf, 1),
+            brplan = plan_brfft(âx, n, 1),
+            zplan! = plan_fft!(âz, 3),
+            bzplan! = plan_bfft!(âz, 3),
+            yplan! = plan_fft!(ây, 2),
+            byplan! = plan_bfft!(ây, 2),
+            xz,
+            zx = reverse_plan(xz),
+            zy,
+            yz = reverse_plan(zy),
+        ),
+    )
+end
+
+"Truncated spectral velocity state (zeros): `(l1, m_local, l3, 3)` complex."
+specvelocity(s) =
+    KernelAbstractions.zeros(s.backend, Complex{s.T}, s.lspec.ldims..., s.fft.nb)
