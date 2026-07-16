@@ -73,7 +73,9 @@ The fully periodic configuration is kept anyway, because:
    DNS reference on the same stencils is what a-posteriori evaluation needs.
 
 Production spectral HIT: a separate pseudo-spectral solver, which is ~90%
-pencil/transpose/FFT infrastructure — exactly §4/§5/§7 of this design.
+pencil/transpose/FFT infrastructure — exactly §4/§5/§7 of this design. Its
+design document is [DESIGN_SPECTRAL.md](DESIGN_SPECTRAL.md); it lives in
+this repository, sharing the layout/transpose layer.
 **Design consequence:** the layout/transpose/FFT layer stays solver-agnostic
 (its API never mentions Navier-Stokes) and is a candidate for its own
 package, amortizing the get-right-first-time component over both solvers.
@@ -364,6 +366,8 @@ meaningless). Three modes, all launched as ordinary `mpiexec -n N` runs:
   (CODE_DESIGN.md §9); memory wins, the sweep is bandwidth-bound anyway.
 - Whether PencilArrays.jl survives under the layout abstraction after
   benchmarking, or is prototype-only scaffolding (§7).
-- When to split the layout/transpose/FFT layer into its own package for
-  reuse by the companion pseudo-spectral HIT solver (§2).
+- ~~When to split the layout/transpose/FFT layer into its own package for
+  reuse by the companion pseudo-spectral HIT solver (§2)~~ — resolved: the
+  spectral solver lives in this repo and consumes the layer directly
+  (DESIGN_SPECTRAL.md §2); a package split waits for a third consumer.
 - Scalar transport (Boussinesq) timing: v1.x, once channel is validated.

@@ -12,7 +12,9 @@ which remains the single-node, differentiable, methods-research code.
 
 See [DESIGN.md](DESIGN.md) for the design document and decision log, and
 [CODE_DESIGN.md](CODE_DESIGN.md) for the code-level design (abstractions,
-API, communication layer).
+API, communication layer). A companion pseudo-spectral HIT solver sharing
+the pencil/transpose/FFT layer is designed in
+[DESIGN_SPECTRAL.md](DESIGN_SPECTRAL.md) (not yet implemented).
 
 ## Status
 
