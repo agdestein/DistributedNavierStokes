@@ -79,7 +79,8 @@ end
 
 """
     spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3,
-                    forcing = nothing, tstops = (), processors = (;))
+                    forcing = nothing, tstops = (), nstart = 0,
+                    processors = (;))
 
 Integrate the spectral state `uh` from `tlims[1]` to `tlims[2]`. The initial
 field is projected. `Δt = nothing` means CFL-adaptive stepping (convective
@@ -88,7 +89,10 @@ step. `forcing` is a mutating hook `forcing(uh, setup)` applied after every
 step (e.g. [`shellforcing`](@ref)). Steps are shortened to land exactly on
 each time in `tstops` (e.g. snapshot times, see [`snapshotsaver`](@ref)).
 Each processor is called as `proc(state, setup)` after every step (and once
-initially) with `state = (; uh, t, n)`. Returns the final state.
+initially) with `state = (; uh, t, n)`; step numbering starts at `nstart`
+(pass the checkpoint's `step` on restart). A processor returning `:stop`
+ends the solve gracefully after the current step (see
+[`checkpointer`](@ref)). Returns the final state.
 """
 function spectral_solve!(;
     uh,
@@ -98,6 +102,7 @@ function spectral_solve!(;
     cfl = 0.3,
     forcing = nothing,
     tstops = (),
+    nstart = 0,
     processors = (;),
 )
     s = setup
@@ -117,10 +122,12 @@ function spectral_solve!(;
     tol = 1e-10 * (abs(tend) + 1)
     stops = sort!(Float64[x for x in tstops if t + tol < x < tend - tol])
     istop = 1
-    n = 0
+    n = nstart
+    stop = false
+    call!(proc) = proc(state, s) === :stop && (stop = true)
     state = (; uh, t, n)
-    foreach(proc -> proc(state, s), processors)
-    while t < tend - tol
+    foreach(call!, processors)
+    while !stop && t < tend - tol
         while istop ≤ length(stops) && stops[istop] ≤ t + tol
             istop += 1
         end
@@ -132,7 +139,7 @@ function spectral_solve!(;
         t += Δtn
         n += 1
         state = (; uh, t, n)
-        foreach(proc -> proc(state, s), processors)
+        foreach(call!, processors)
     end
     state
 end

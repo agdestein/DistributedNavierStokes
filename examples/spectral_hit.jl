@@ -1,4 +1,8 @@
-# Forced homogeneous isotropic turbulence with the pseudo-spectral solver.
+# Forced homogeneous isotropic turbulence with the pseudo-spectral solver,
+# with checkpoint/restart: if a checkpoint exists under $DNS_OUTDIR the run
+# resumes from it, and touching $DNS_OUTDIR/stop makes it checkpoint and
+# exit gracefully (the SLURM time-limit pattern, see
+# snellius/spectral_h100.sh).
 #
 # Run distributed (each rank picks its own GPU):
 #   mpiexec -n 4 julia --project=examples examples/spectral_hit.jl
@@ -21,6 +25,13 @@ else
     backend = CPU()
 end
 
+outdir = get(ENV, "DNS_OUTDIR", "output")
+rank == 0 && mkpath(outdir)
+MPI.Barrier(MPI.COMM_WORLD)
+ckpt = joinpath(outdir, "ckpt")
+stopfile = joinpath(outdir, "stop")
+tend = 5.0
+
 s = spectral_setup(;
     n = 128,                  # transform grid (kcut = n ÷ 3)
     l = 2π,
@@ -31,8 +42,18 @@ s = spectral_setup(;
 rank == 0 && println("n = $(s.n), kcut = $(s.kcut), procgrid = $(s.topo.procgrid)")
 
 uh = specvelocity(s)
-spectral_randomfield!(uh, s; totalenergy = 0.5, kpeak = 4, seed = 0)
-forcing = shellforcing(uh, s; shells = 1:2)
+latest = spectral_latest(ckpt, s)
+if latest === nothing
+    spectral_randomfield!(uh, s; totalenergy = 0.5, kpeak = 4, seed = 0)
+    eref = shell_energies(uh, s, 1:2)
+    t0, nstart = 0.0, 0
+else
+    md = spectral_load!(uh, latest, s)
+    eref = collect(Float64, md.meta["eref"])
+    t0, nstart = md.time, md.step
+    rank == 0 && println("restarting from $latest (t = $t0, step = $nstart)")
+end
+forcing = shellforcing(uh, s; shells = 1:2, eref)
 
 log = (state, s) -> begin
     state.n % 20 == 0 || return
@@ -47,14 +68,22 @@ end
 state = spectral_solve!(;
     uh,
     setup = s,
-    tlims = (0.0, 5.0),
+    tlims = (t0, tend),
     cfl = 0.4,
     forcing,
-    processors = (; log),
+    nstart,
+    processors = (;
+        log,
+        ckpt = checkpointer(ckpt; interval = 600.0, stopfile, meta = (; eref)),
+    ),
 )
 
-sp = spectral_spectrum(uh, s)
-if rank == 0
-    println("final spectrum (κ, E):")
-    foreach((κ, E) -> println("  ", lpad(κ, 3), "  ", E), sp.κ, sp.E)
+if state.t < tend
+    rank == 0 && println("stopped at t = $(state.t) (checkpointed; resubmit to continue)")
+else
+    sp = spectral_spectrum(uh, s)
+    if rank == 0
+        println("final spectrum (κ, E):")
+        foreach((κ, E) -> println("  ", lpad(κ, 3), "  ", E), sp.κ, sp.E)
+    end
 end

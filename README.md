@@ -77,10 +77,17 @@ sharing the pencil/transpose layer — implemented and tested:
   independent of rank count and processor grid; TOML metadata sidecar.
   Tested: byte-exact round trip, cross-decomposition load, restart mid-run
   replaying the uninterrupted forced trajectory to 1e-12.
-- Example: `examples/spectral_hit.jl`.
+- Checkpoint/restart across job time limits: `checkpointer` processor
+  (wall-clock interval + stop-file trigger, keeps the newest two, all
+  collective decisions broadcast from rank 0), `spectral_latest` for
+  restart discovery, solver `nstart` and `:stop` processor convention.
+  SLURM integration goes through a stop *file*, not signals to the ranks:
+  the job script traps `--signal=B:USR1@900`, touches the file, and
+  resubmits itself (`examples/snellius/spectral_h100.sh`);
+  `examples/spectral_hit.jl` auto-resumes from the newest checkpoint.
+- Example: `examples/spectral_hit.jl` (full production pattern).
 
-Spectral not yet: SLURM-signal checkpointing (write-then-rename triggers +
-auto-resubmit), filtered-field/SFS output in the SymmetryCode schemas, 2D
+Spectral not yet: filtered-field/SFS output in the SymmetryCode schemas, 2D
 slices, Snellius validation — DESIGN_SPECTRAL.md §8, §11 phases 4-5.
 
 ## Quickstart

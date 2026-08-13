@@ -222,6 +222,68 @@ end
     rank == 0 && rm(dir; recursive = true)
 end
 
+@testset "spectral checkpointing n=$nranks pg=$pg" for pg in procgrids(nranks)
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+
+    # Uninterrupted forced run with a checkpoint every step (interval 0);
+    # only the newest two survive the cleanup.
+    runsetup() = spectral_setup(; n = 18, visc = 5e-3, comm, procgrid = pg)
+    # NB: the helper's locals must not share names with this testset's
+    # variables — assignment in a closure rebinds an enclosing local of the
+    # same name (this silently replaced the reference field once).
+    function initial(sl)
+        ul = specvelocity(sl)
+        spectral_randomfield!(ul, sl; totalenergy = 0.4, kpeak = 2, seed = 7)
+        ul, shell_energies(ul, sl, 1:2)
+    end
+    s = runsetup()
+    uh, eref = initial(s)
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.0, 0.08), Δt = 0.008,
+        forcing = shellforcing(uh, s; shells = 1:2, eref),
+        processors = (; ck = checkpointer(joinpath(dir, "ck"); interval = 0.0, meta = (; eref))),
+    )
+    l = DNS.checkpointlist(joinpath(dir, "ck"))
+    @test length(l) == 2
+    @test spectral_latest(joinpath(dir, "ck"), s) == last(l)
+
+    # Stop-file run: a processor touches the stop file after step 4; the
+    # checkpointer saves and ends the solve.
+    stopfile = joinpath(dir, "stop")
+    s2 = runsetup()
+    uh2, eref2 = initial(s2)
+    st = spectral_solve!(;
+        uh = uh2, setup = s2, tlims = (0.0, 0.08), Δt = 0.008,
+        forcing = shellforcing(uh2, s2; shells = 1:2, eref = eref2),
+        processors = (;
+            toucher = (state, s) -> (s.topo.rank == 0 && state.n == 4 && touch(stopfile); nothing),
+            ck = checkpointer(joinpath(dir, "ck2"); interval = Inf, stopfile, meta = (; eref = eref2)),
+        ),
+    )
+    @test st.n == 4 && st.t < 0.08
+
+    # Resume from the stop checkpoint and finish: matches the uninterrupted
+    # run's final state.
+    s3 = runsetup()
+    uh3 = specvelocity(s3)
+    latest = spectral_latest(joinpath(dir, "ck2"), s3)
+    md = spectral_load!(uh3, latest, s3)
+    @test md.step == 4 && md.time ≈ st.t
+    spectral_solve!(;
+        uh = uh3, setup = s3, tlims = (md.time, 0.08), Δt = 0.008,
+        forcing = shellforcing(uh3, s3; shells = 1:2, eref = md.meta["eref"]),
+        nstart = md.step,
+        processors = (; ck = checkpointer(joinpath(dir, "ck2"); interval = 0.0, meta = (; eref = md.meta["eref"]))),
+    )
+    @test maximum(abs, Array(uh3) .- Array(uh)) < 1e-12
+    # resumed checkpoint numbering continued from the loaded step
+    @test length(DNS.checkpointlist(joinpath(dir, "ck2"))) == 2
+
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
 @testset "spectral host-staged buffers n=$nranks" begin
     s = spectral_setup(; n = 12, comm, mpibuf = :host)
     uh = specvelocity(s)

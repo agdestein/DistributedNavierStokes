@@ -41,6 +41,6 @@ export spectral_setup, spectral_solve!, specvelocity, spectral_velocityfield!,
     taylorgreen!, spectral_randomfield!, spectral_project!, spectral_energy,
     spectral_dissipation, spectral_maxdiv, spectral_stats, spectral_spectrum,
     shellforcing, shell_energies, spec_to_phys!, phys_to_spec!,
-    spectral_save, spectral_load!, snapshotsaver
+    spectral_save, spectral_load!, snapshotsaver, checkpointer, spectral_latest
 
 end

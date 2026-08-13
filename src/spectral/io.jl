@@ -103,6 +103,86 @@ function spectral_load!(uh, prefix, s)
     (; time = d["time"], step = d["step"], meta = get(d, "meta", Dict{String,Any}()))
 end
 
+"Checkpoint prefixes `<prefix>_<step>` with complete file pairs, ascending by step."
+function checkpointlist(prefix)
+    dir = isempty(dirname(prefix)) ? "." : dirname(prefix)
+    base = basename(prefix)
+    isdir(dir) || return String[]
+    steps = Int[]
+    for f in readdir(dir)
+        mm = match(Regex("^\\Q$base\\E_(\\d+)\\.toml\$"), f)
+        mm === nothing && continue
+        isfile(joinpath(dir, "$(base)_$(mm.captures[1]).bin")) || continue
+        push!(steps, parse(Int, mm.captures[1]))
+    end
+    sort!(steps)
+    [joinpath(dir, @sprintf("%s_%09d", base, st)) for st in steps]
+end
+
+"""
+    spectral_latest(prefix, s) -> String or nothing
+
+Newest complete checkpoint written by [`checkpointer`](@ref) under `prefix`
+(rank 0 scans the directory, the result is broadcast), or `nothing` when
+none exists. Load it with [`spectral_load!`](@ref).
+"""
+spectral_latest(prefix, s) = MPI.bcast(
+    s.topo.rank == 0 ?
+    (l = checkpointlist(prefix); isempty(l) ? nothing : last(l)) : nothing,
+    s.topo.cart,
+)
+
+"""
+    checkpointer(prefix; interval = 900.0, stopfile = nothing, keep = 2, meta = (;))
+
+Processor for [`spectral_solve!`](@ref) writing restart checkpoints
+`<prefix>_<step>` (via [`spectral_save`](@ref), so atomic and rank-count
+independent): every `interval` seconds of wall clock, and — when `stopfile`
+is given — as soon as that file exists, in which case it also returns
+`:stop` so the solve ends gracefully after the checkpoint. This is the
+SLURM time-limit pattern: the job script traps the `--signal=B:USR1@...`
+warning, touches `stopfile`, and resubmits itself (see
+examples/snellius/spectral_h100.sh). Only the newest `keep` checkpoints are
+retained. Rank 0 takes the decision and broadcasts it, so all ranks write
+collectively. On restart, find the checkpoint with
+[`spectral_latest`](@ref) and pass its `step` as the solver's `nstart` so
+checkpoint numbering continues.
+"""
+function checkpointer(prefix; interval = 900.0, stopfile = nothing, keep = 2, meta = (;))
+    tlast = Ref(time())
+    (state, s) -> begin
+        (; rank, cart) = s.topo
+        due, stop = MPI.bcast(
+            rank == 0 ?
+            (
+                time() - tlast[] ≥ interval,
+                stopfile !== nothing && isfile(stopfile),
+            ) : nothing,
+            cart,
+        )
+        due || stop || return nothing
+        spectral_save(
+            @sprintf("%s_%09d", prefix, state.n),
+            state.uh,
+            s;
+            time = state.t,
+            step = state.n,
+            meta,
+        )
+        tlast[] = time()
+        if rank == 0
+            old = checkpointlist(prefix)
+            for p in old[1:(end-min(keep, length(old)))]
+                rm("$p.bin"; force = true)
+                rm("$p.toml"; force = true)
+            end
+        end
+        # all ranks see the retention policy applied once the step completes
+        MPI.Barrier(cart)
+        stop ? :stop : nothing
+    end
+end
+
 """
     snapshotsaver(prefix; times, meta = (;))
 
