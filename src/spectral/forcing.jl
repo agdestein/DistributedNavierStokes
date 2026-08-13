@@ -35,14 +35,17 @@ function rescale_shell!(uh, s, sh, factor)
 end
 
 """
-    forcing = shellforcing(uh, s; shells = 1:2)
+    forcing = shellforcing(uh, s; shells = 1:2, eref)
 
 Shell-clamp forcing: record the current (initial) energy in the given
 shells; the returned closure `forcing(uh, s)` rescales those shells back to
-their reference energy. Pass it to `spectral_solve!(; forcing)`.
+their reference energy. Pass it to `spectral_solve!(; forcing)`. `eref`
+overrides the recorded energies — pass the original reference values when
+restarting from a snapshot (e.g. stored in its `meta`, see
+[`spectral_save`](@ref)).
 """
-function shellforcing(uh, s; shells = 1:2)
-    eref = shell_energies(uh, s, shells)
+function shellforcing(uh, s; shells = 1:2, eref = shell_energies(uh, s, shells))
+    eref = collect(s.T, eref)
     (uh2, s2) -> begin
         e = shell_energies(uh2, s2, shells)
         for (sh, e0, e1) in zip(shells, eref, e)

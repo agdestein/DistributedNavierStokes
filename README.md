@@ -70,11 +70,18 @@ sharing the pencil/transpose layer — implemented and tested:
   decomposition invariance of full forced trajectories (1-4 ranks, all
   processor grids, host-staged buffers). GPU: single-device runs and 2-4
   ranks sharing an RTX 4090 over CUDA-aware MPI match CPU to 1e-15.
+- Snapshot/restart I/O (`spectral_save` / `spectral_load!` /
+  `snapshotsaver`, with `tstops` landing steps exactly on save times): the
+  truncated state — exactly the dealiased coefficients, no ghost modes —
+  written in global index order via collective MPI-IO, so files are
+  independent of rank count and processor grid; TOML metadata sidecar.
+  Tested: byte-exact round trip, cross-decomposition load, restart mid-run
+  replaying the uninterrupted forced trajectory to 1e-12.
 - Example: `examples/spectral_hit.jl`.
 
-Spectral not yet: checkpoint/restart (MPI-IO), filtered-field/SFS output in
-the SymmetryCode schemas, 2D slices, Snellius validation — DESIGN_SPECTRAL.md
-§8, §11 phases 4-5.
+Spectral not yet: SLURM-signal checkpointing (write-then-rename triggers +
+auto-resubmit), filtered-field/SFS output in the SymmetryCode schemas, 2D
+slices, Snellius validation — DESIGN_SPECTRAL.md §8, §11 phases 4-5.
 
 ## Quickstart
 

@@ -155,6 +155,73 @@ end
     @test shell_energies(uhpar, spar, 1:2) ≈ shell_energies(uh0, s0, 1:2)
 end
 
+@testset "spectral snapshot I/O n=$nranks pg=$pg" for pg in procgrids(nranks)
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+    s = spectral_setup(; n = 18, comm, procgrid = pg)
+    uh = specvelocity(s)
+    spectral_velocityfield!(uh, s; x = fx, y = fy, z = fz)
+    eref = shell_energies(uh, s, 1:2)
+    spectral_save(joinpath(dir, "field"), uh, s; time = 1.5, step = 7, meta = (; eref))
+
+    # Byte-exact round trip on the same decomposition, metadata included.
+    uh2 = specvelocity(s)
+    md = spectral_load!(uh2, joinpath(dir, "field"), s)
+    @test Array(uh2) == Array(uh)
+    @test md.time == 1.5 && md.step == 7
+    @test md.meta["eref"] == eref
+
+    # The file is written in global index order: a serial (1-rank) reader on
+    # every rank reconstructs the full field, matching a serially generated
+    # one to pipeline roundoff.
+    sser = spectral_setup(; n = 18, comm = MPI.COMM_SELF, procgrid = (1, 1))
+    uhser = specvelocity(sser)
+    spectral_velocityfield!(uhser, sser; x = fx, y = fy, z = fz)
+    uhread = specvelocity(sser)
+    spectral_load!(uhread, joinpath(dir, "field"), sser)
+    @test maximum(abs, Array(uhread) .- Array(uhser)) < 1e-13
+
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
+@testset "spectral snapshot restart n=$nranks pg=$pg" for pg in procgrids(nranks)
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+    tsave = [0.05, 0.1]
+
+    # Uninterrupted forced run, snapshots at 0.05 and 0.1 (tstops makes the
+    # steps land on them exactly).
+    s = spectral_setup(; n = 18, visc = 5e-3, comm, procgrid = pg)
+    uh = specvelocity(s)
+    spectral_randomfield!(uh, s; totalenergy = 0.4, kpeak = 2, seed = 7)
+    eref = shell_energies(uh, s, 1:2)
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.0, 0.1), Δt = 0.008,
+        forcing = shellforcing(uh, s; shells = 1:2),
+        tstops = tsave,
+        processors = (; snap = snapshotsaver(joinpath(dir, "full"); times = tsave, meta = (; eref))),
+    )
+
+    # Restart from the mid snapshot (forcing reference from the sidecar)
+    # and replay to 0.1: the trajectory continues as if uninterrupted.
+    s2 = spectral_setup(; n = 18, visc = 5e-3, comm, procgrid = pg)
+    uh2 = specvelocity(s2)
+    md = spectral_load!(uh2, joinpath(dir, "full_0001"), s2)
+    @test md.time == 0.05
+    spectral_solve!(;
+        uh = uh2, setup = s2, tlims = (md.time, 0.1), Δt = 0.008,
+        forcing = shellforcing(uh2, s2; shells = 1:2, eref = md.meta["eref"]),
+        processors = (; snap = snapshotsaver(joinpath(dir, "restart"); times = [0.1])),
+    )
+    a = reinterpret(ComplexF64, read(joinpath(dir, "full_0002.bin")))
+    b = reinterpret(ComplexF64, read(joinpath(dir, "restart_0001.bin")))
+    @test maximum(abs, a .- b) < 1e-12
+
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
 @testset "spectral host-staged buffers n=$nranks" begin
     s = spectral_setup(; n = 12, comm, mpibuf = :host)
     uh = specvelocity(s)

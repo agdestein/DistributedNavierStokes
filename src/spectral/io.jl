@@ -1,0 +1,131 @@
+# Snapshot / restart I/O for the spectral solver. The state is exactly the
+# retained (dealiased) coefficients — there are no ghost modes to strip —
+# and is written with collective MPI-IO subarray views in *global index
+# order*: `<prefix>.bin` holds the (kcut+1, m, m, 3) complex array
+# column-major, one component after the other, so the byte layout is
+# independent of rank count and processor grid (a run on 1 GPU and on 128
+# produces the same file up to FFT-reordering roundoff in the values). A
+# `<prefix>.toml` sidecar carries the metadata. No HDF5: MPI-IO comes with
+# the MPI dependency we already have (CODE_DESIGN.md §2), and TOML is stdlib.
+#
+# Components are written through separate views (a byte displacement per
+# component) so per-call MPI counts stay far below the Cint limit even for
+# large local blocks (few ranks, big grids).
+
+"MPI subarray filetype of this rank's block of one spectral component."
+function specblocktype(s)
+    (; kcut, m, lspec) = s
+    t = MPI.Types.create_subarray(
+        (kcut + 1, m, m),
+        lspec.ldims,
+        map(r -> first(r) - 1, lspec.ranges),
+        MPI.Datatype(Complex{s.T}),
+    )
+    MPI.Types.commit!(t)
+    t
+end
+
+"""
+    spectral_save(prefix, uh, s; time = 0.0, step = 0, meta = (;))
+
+Save the spectral state `uh` to `<prefix>.bin` (collective MPI-IO, global
+index order, rank-count independent) with a `<prefix>.toml` metadata
+sidecar. `meta` is a NamedTuple of extra scalars/vectors to store (e.g.
+forcing reference energies). Atomic: both files appear under their final
+names only when complete. Returns `prefix`.
+"""
+function spectral_save(prefix, uh, s; time = 0.0, step = 0, meta = (;))
+    (; T, kcut, m, topo) = s
+    datafile, metafile = "$prefix.bin", "$prefix.toml"
+    fieldbytes = sizeof(Complex{T}) * (kcut + 1) * m * m
+    uhh = convert(Array{Complex{T},4}, uh)   # host stage (no-op on CPU)
+    topo.rank == 0 && rm("$datafile.tmp"; force = true)
+    MPI.Barrier(topo.cart)
+    ftype = specblocktype(s)
+    fh = MPI.File.open(topo.cart, "$datafile.tmp"; write = true, create = true)
+    for c = 1:3
+        MPI.File.set_view!(fh, (c - 1) * fieldbytes, MPI.Datatype(Complex{T}), ftype)
+        MPI.File.write_all(fh, view(uhh, :, :, :, c))
+    end
+    MPI.File.close(fh)
+    if topo.rank == 0
+        d = Dict{String,Any}(
+            "format" => "DistributedNavierStokes spectral state",
+            "version" => 1,
+            "eltype" => string(T),
+            "n" => s.n,
+            "kcut" => kcut,
+            "m" => m,
+            "l" => Float64(s.l),
+            "visc" => Float64(s.visc),
+            "time" => Float64(time),
+            "step" => Int(step),
+            "order" => "column-major (kx, ky, kz, component) complex; " *
+                       "kx = 0:kcut, ky/kz wrapped 0:kcut then -kcut:-1",
+            "data" => basename(datafile),
+        )
+        isempty(pairs(meta)) ||
+            (d["meta"] = Dict{String,Any}(string(k) => v for (k, v) in pairs(meta)))
+        open(io -> TOML.print(io, d; sorted = true), "$metafile.tmp", "w")
+        mv("$metafile.tmp", metafile; force = true)
+        mv("$datafile.tmp", datafile; force = true)
+    end
+    MPI.Barrier(topo.cart)
+    prefix
+end
+
+"""
+    spectral_load!(uh, prefix, s) -> (; time, step, meta)
+
+Load a [`spectral_save`](@ref) snapshot into `uh` (collective MPI-IO; any
+rank count and processor grid, independent of the writer's). The retained
+modes must match the setup (`kcut`, `l`, eltype); the transform grid `n`
+need not — a snapshot restarts on a finer grid for higher-Re continuation.
+Returns the sidecar time, step, and `meta` dictionary.
+"""
+function spectral_load!(uh, prefix, s)
+    (; T, kcut, m, lspec, topo) = s
+    d = MPI.bcast(topo.rank == 0 ? TOML.parsefile("$prefix.toml") : nothing, topo.cart)
+    d["eltype"] == string(T) && d["kcut"] == kcut && d["l"] == Float64(s.l) || error(
+        "snapshot $prefix (eltype $(d["eltype"]), kcut $(d["kcut"]), l $(d["l"])) " *
+        "does not match setup (eltype $T, kcut $kcut, l $(Float64(s.l)))",
+    )
+    fieldbytes = sizeof(Complex{T}) * (kcut + 1) * m * m
+    uhh = Array{Complex{T},4}(undef, lspec.ldims..., 3)
+    ftype = specblocktype(s)
+    fh = MPI.File.open(topo.cart, "$prefix.bin"; read = true)
+    for c = 1:3
+        MPI.File.set_view!(fh, (c - 1) * fieldbytes, MPI.Datatype(Complex{T}), ftype)
+        MPI.File.read_all!(fh, view(uhh, :, :, :, c))
+    end
+    MPI.File.close(fh)
+    copyto!(uh, uhh)
+    (; time = d["time"], step = d["step"], meta = get(d, "meta", Dict{String,Any}()))
+end
+
+"""
+    snapshotsaver(prefix; times, meta = (;))
+
+Processor for [`spectral_solve!`](@ref) that saves the state the first time
+`t` reaches each entry of `times`, as `<prefix>_0001`, `<prefix>_0002`, … in
+order. Pass the same `times` as `tstops` to the solver so steps land on them
+exactly; the sidecar records the actual `t`.
+"""
+function snapshotsaver(prefix; times, meta = (;))
+    times = sort!(Float64[t for t in times])
+    inext = Ref(1)
+    (state, s) -> begin
+        while inext[] ≤ length(times) &&
+            state.t ≥ times[inext[]] - 1e-10 * (abs(times[inext[]]) + 1)
+            spectral_save(
+                @sprintf("%s_%04d", prefix, inext[]),
+                state.uh,
+                s;
+                time = state.t,
+                step = state.n,
+                meta,
+            )
+            inext[] += 1
+        end
+    end
+end
