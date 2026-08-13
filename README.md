@@ -85,10 +85,19 @@ sharing the pencil/transpose layer — implemented and tested:
   the job script traps `--signal=B:USR1@900`, touches the file, and
   resubmits itself (`examples/snellius/spectral_h100.sh`);
   `examples/spectral_hit.jl` auto-resumes from the newest checkpoint.
+- Filtered-field/sub-filter-stress research output (`sfswriter`): at
+  prescribed times, one extra nonlinearity evaluation (reusing the RHS
+  pipeline buffers), a Gatherv of only the LES-cube modes of û and σ̂ to
+  rank 0, then SymmetryCode's `sfs!` ported verbatim on the small coarse
+  grid (Gaussian test filter with forced-shell protection, 2/3 truncation,
+  τ = filter(σ) − ū⊗ū trace-free) and its exact JLD2 artifact schemas
+  (`fields.jld2`, `les_meta.jld2`, `dns_meta.jld2`) — the downstream
+  training/analysis pipeline applies unchanged. Validated against an
+  independent serial FFTW oracle to 1e-12 on all processor grids.
 - Example: `examples/spectral_hit.jl` (full production pattern).
 
-Spectral not yet: filtered-field/SFS output in the SymmetryCode schemas, 2D
-slices, Snellius validation — DESIGN_SPECTRAL.md §8, §11 phases 4-5.
+Spectral not yet: 2D slices (`slicefile` schema), Snellius validation —
+DESIGN_SPECTRAL.md §8, §11 phases 4-5.
 
 ## Quickstart
 

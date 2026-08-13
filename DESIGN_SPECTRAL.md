@@ -1,13 +1,15 @@
 # Design document: distributed pseudo-spectral HIT solver
 
 Status: August 2026 — phases 1-3 of §11 implemented (`src/spectral/`,
-CPU + GPU + multi-rank tested; see README status), plus phase-4
-checkpoint/restart: MPI-IO snapshots in global index order, wall-clock +
-stop-file checkpointing with SLURM resubmission (`io.jl`,
-examples/snellius/spectral_h100.sh). §8's signal handling is implemented
-via a stop file touched by the job script's trap — signals never reach the
-Julia ranks. Remaining phase 4 (fieldsfile/SFS/slice writers) and phases
-5-6 (Snellius, optimizations) pending.
+CPU + GPU + multi-rank tested; see README status), plus phase 4:
+MPI-IO snapshots in global index order, wall-clock + stop-file
+checkpointing with SLURM resubmission (`io.jl`,
+examples/snellius/spectral_h100.sh; §8's signal handling goes through a
+stop file touched by the job script's trap — signals never reach the Julia
+ranks), and the filtered-field/SFS research output in the SymmetryCode
+schemas (`les.jl`: LES-cube gather + rank-0 `sfs!` port, JLD2 as a hard
+dependency — pure Julia, no system-library coupling). Remaining: 2D slices
+(§8) and phases 5-6 (Snellius, optimizations).
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)

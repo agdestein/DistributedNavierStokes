@@ -4,6 +4,7 @@
 
 using DistributedNavierStokes
 using FFTW
+using JLD2: load
 using KernelAbstractions
 using MPI
 using Random
@@ -279,6 +280,118 @@ end
     @test maximum(abs, Array(uh3) .- Array(uh)) < 1e-12
     # resumed checkpoint numbering continued from the loaded step
     @test length(DNS.checkpointlist(joinpath(dir, "ck2"))) == 2
+
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
+@testset "spectral SFS output n=$nranks pg=$pg" for pg in procgrids(nranks)
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+    N, nles = 24, 12
+    visc = 4e-3
+    filters = [1.0, 2.0]
+    times = [0.0, 0.03]
+
+    s = spectral_setup(; n = N, visc, comm, procgrid = pg)
+    uh = specvelocity(s)
+    spectral_randomfield!(uh, s; totalenergy = 0.3, kpeak = 2, seed = 11)
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.0, 0.03), Δt = 0.005, tstops = times,
+        processors = (; sfs = sfswriter(s; dir = joinpath(dir, "out"), nles, filters, times)),
+    )
+    MPI.Barrier(comm)
+
+    # Independent serial oracle: SymmetryCode's sfs! recipe with plain FFTW
+    # on the full fine rfft array, reconstructed from a serial (1-rank) run
+    # of the same trajectory (the counter-based IC makes it identical).
+    sser = spectral_setup(; n = N, visc, comm = MPI.COMM_SELF, procgrid = (1, 1))
+    uhser = specvelocity(sser)
+    spectral_randomfield!(uhser, sser; totalenergy = 0.3, kpeak = 2, seed = 11)
+    freq(g, n) = g - 1 - (g ≤ (n + 1) ÷ 2 ? 0 : n)                    # fftfreq int
+    function oracle(uhloc, sfilters)
+        (; kcut, m) = sser
+        uhh = Array(uhloc)
+        # full fine rfft array of û (retained modes at fine positions)
+        F = zeros(ComplexF64, N ÷ 2 + 1, N, N, 3)
+        finepos(g) = (k = DNS.compactfreq(g, m, kcut); k ≥ 0 ? k + 1 : N + k + 1)
+        for c = 1:3, k = 1:m, j = 1:m, i = 1:(kcut+1)
+            F[i, finepos(j), finepos(k), c] = uhh[i, j, k, c]
+        end
+        # physical dealiased velocities and full product spectra
+        v = [brfft(F[:, :, :, c], N) for c = 1:3]
+        prods = ((1, 1), (2, 2), (3, 3), (1, 2), (2, 3), (3, 1))
+        σf = [rfft(v[i] .* v[j]) ./ N^3 for (i, j) in prods]
+        # sharp cutoff fine → coarse (SymmetryCode's cutoff!)
+        finei(g) = freq(g, nles) ≥ 0 ? freq(g, nles) + 1 : N + freq(g, nles) + 1
+        cutf(a) = [a[i, finei(j), finei(k)] for i = 1:(nles÷2+1), j = 1:nles, k = 1:nles]
+        function gauss(a, Δ)
+            b = copy(a)
+            for k = 1:nles, j = 1:nles, i = 1:(nles÷2+1)
+                kk = (i - 1)^2 + freq(j, nles)^2 + freq(k, nles)^2
+                kk < 9 || (b[i, j, k] *= exp(-Δ^2 * kk / 24))   # forced shells protected
+            end
+            b
+        end
+        function deal(a)
+            b = copy(a)
+            for k = 1:nles, j = 1:nles, i = 1:(nles÷2+1)
+                k1, k2, k3 = i - 1, freq(j, nles), freq(k, nles)
+                keep = k1 ≤ nles ÷ 3 && abs(k2) ≤ nles ÷ 3 && abs(k3) ≤ nles ÷ 3 &&
+                       (k1, k2, k3) != (0, 0, 0)
+                keep || (b[i, j, k] = 0)
+            end
+            b
+        end
+        map(sfilters) do Δf
+            Δ = Δf * 2π / nles
+            ub = [deal(gauss(cutf(F[:, :, :, c]), Δ)) for c = 1:3]
+            σ1 = [gauss(cutf(σ), Δ) for σ in σf]
+            vb = [brfft(deal(u), nles) for u in ub]
+            σ2 = [rfft(vb[i] .* vb[j]) ./ nles^3 for (i, j) in prods]
+            τ = [deal(σ1[c] - σ2[c]) for c = 1:6]
+            tr = (τ[1] .+ τ[2] .+ τ[3]) ./ 3
+            for c = 1:3
+                τ[c] = τ[c] .- tr
+            end
+            (; ub, τ)
+        end
+    end
+
+    err(a, b) = maximum(abs, a .- b)
+    for (j, t) in enumerate(times)
+        t == 0.0 || spectral_solve!(; uh = uhser, setup = sser, tlims = (0.0, t), Δt = 0.005)
+        ref = oracle(uhser, filters)
+        for (k, Δf) in enumerate(filters)
+            inp, out, redelta, Δ = load(
+                joinpath(dir, "out", "delta=$(Δf)", "fields.jld2"),
+                "inputs", "outputs", "redelta", "Δ",
+            )
+            @test Δ ≈ Δf * 2π / nles
+            @test maximum(
+                err(getproperty(inp[j], c), ref[k].ub[ci]) for
+                (ci, c) in enumerate((:x, :y, :z))
+            ) < 1e-12
+            @test maximum(
+                err(getproperty(out[j], c), ref[k].τ[ci]) for
+                (ci, c) in enumerate((:xx, :yy, :zz, :xy, :yz, :zx))
+            ) < 1e-12
+            @test length(redelta) == 2 && all(>(0), redelta)
+        end
+    end
+    # DNS-side metadata: times land exactly, spectra over shells 1:kcut,
+    # statistics match the serial state at the final time.
+    mtimes, spectra_dns, statistics_dns = load(
+        joinpath(dir, "out", "dns_meta.jld2"), "times", "spectra_dns", "statistics_dns",
+    )
+    @test mtimes ≈ times atol = 1e-10
+    @test length(spectra_dns[1]) == s.kcut
+    @test statistics_dns[2].e ≈ spectral_energy(uhser, sser) rtol = 1e-10
+    sples, redmean = load(
+        joinpath(dir, "out", "delta=2.0", "les_meta.jld2"), "spectra_les", "redelta_mean",
+    )
+    @test length(sples) == 2 && length(sples[1]) == nles ÷ 3
+    @test redmean > 0
 
     MPI.Barrier(comm)
     rank == 0 && rm(dir; recursive = true)
