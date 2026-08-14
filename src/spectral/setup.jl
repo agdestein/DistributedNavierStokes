@@ -16,8 +16,11 @@ Keywords:
 - `l = 2π`: box side length.
 - `visc = 1e-3`: kinematic viscosity.
 - `kcut = n ÷ 3`: truncation wavenumber (alias-free needs `3kcut ≤ n`).
-- `procgrid = nothing`: 2D processor grid; default near-square. Slabs
-  `(P, 1)` make the z→y stage communication-free.
+- `procgrid = nothing`: 2D processor grid; default `(1, nranks)` slabs —
+  the x→z stage is then communication-free, measured 2-2.5× faster than
+  near-square grids at 2-4 GPUs (CAMPAIGN.md S0; `(P, 1)` instead makes
+  z→y communication-free but measured slower). Pass an explicit grid at
+  rank counts beyond the measured range.
 - `mpibuf = :auto`: as in [`setup`](@ref), plus `:nccl` — transpose
   payloads go over NCCL instead of MPI (GPU backend only; requires
   `using CUDA, NCCL` to load the package extension, and one distinct
@@ -55,7 +58,7 @@ function spectral_setup(;
     stagehost =
         mpibuf == :host || (mpibuf == :auto && !(backend isa CPU) && !MPI.has_cuda())
     nranks = MPI.Comm_size(comm)
-    procgrid = something(procgrid, squarest(nranks))
+    procgrid = something(procgrid, (1, nranks))
     topo = topology(comm, procgrid, (true, true))
     ncclcomms = usenccl ? map(nccl_subcomm, topo.subcomms) : (nothing, nothing)
 

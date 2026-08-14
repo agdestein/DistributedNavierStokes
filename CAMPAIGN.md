@@ -239,11 +239,13 @@ Mapping: campaign items V0/R1/R2/R3, bursts, controls
   1080³ on 2, 1296³ on 4 still do not.** Remaining lever if those are
   ever needed: B_w = 1 product batching (−4.5 equivalents, unbuilt).
   R2 runs on 2 GPUs per realization (0.87 s/step at 810³).
-- [ ] **2b. Spectral procgrid default**: (1,p) beats `squarest` 2–2.5×
-  at 2 and 4 ranks (S0 finding 3). Either flip the spectral default to
-  slabs-in-dim-2 or benchmark the crossover at higher rank counts
-  first; meanwhile production scripts pass `procgrid = (1, p)`
-  explicitly.
+- [x] **2b. Spectral procgrid default** — done 2026-08-14: the spectral
+  default is now `(1, nranks)` slabs (measured fastest at 2-4 GPUs under
+  both transports; the docstring says to pass an explicit grid beyond
+  the measured range). Flipping the default also exposed a latent bug
+  the suite then caught: the host-staged path copied whole (possibly
+  reused, oversized) device buffers into exactly-sized host mirrors —
+  now prefix copies. FV `setup` keeps `squarest`.
 - [x] **3. Filter bank generalization** — done 2026-08-14. A bank cell
   is `(; M, kernel, Δfac)` (+ optional `Δη` label): kernels
   `:gaussian | :cutoff | :tophat | :helmholtz` sharing the low-k
@@ -269,15 +271,22 @@ Mapping: campaign items V0/R1/R2/R3, bursts, controls
   correlations, decomposition-invariant — tested) via
   `DNS_PHASESEED`/`phaseseed`. GPU end-to-end verified (4 ranks:
   snapshots → bank → null bank).
-- [ ] **5. Run-record hygiene** (small): statistics time series (ε,
-  L_int, t_int, η per interval) written to file by a processor for the
-  stationarity drift check; η/t_int stamped into snapshot sidecars.
-- [ ] **6. V0 twin-comparison design.** The counter-based IC cannot
-  bit-reproduce SymmetryCode's RNG stream. Either compare statistically
-  (spectra/statistics over a window) or hand both solvers the same
-  initial field via the snapshot format. Decide before V0 is scripted.
-  (`spectral_randomfield!` already takes the round-one k⁻⁵ᐟ³ profile via
-  its `profile` kwarg; forcing clamp + shells 1–3 control exist.)
+- [x] **5. Run-record hygiene** — done 2026-08-14: `statswriter(; file,
+  nupdate)` appends a CSV row of every K41 statistic per interval (rank
+  0, append mode so restarts continue the series — the ε/L_int
+  stationarity drift record; wired into `examples/spectral_hit.jl`),
+  and `snapshotsaver` now stamps `eta`, `t_int`, `e`, `diss` measured
+  at save time into each sidecar's meta (so snapshot spacing in t_int
+  and Δ/η pinning are self-documenting; disable with `stats = false`).
+- [x] **6. V0 twin-comparison design** — decided + tooling built
+  2026-08-14: **exact twin via state import**, not statistical.
+  `spectral_from_rfft!` maps a SymmetryCode full-rfft `(; x, y, z)`
+  state (shared û = F[u]/n³ normalization) into the truncated state;
+  `examples/symmetrycode_import.jl` converts a warmed-DNS JLD2 into a
+  snapshot (serial, once), which any rank count then restarts from —
+  so V0 compares both solvers evolving the *same* field, with the
+  statistical spectra/statistics check as a byproduct of `statswriter`
+  + `dns_meta`. Round-trip import is tested exact.
 
 Not needed for this campaign: the 2D slice writer (nothing in the spec
 asks for it); Lundgren/linear forcing (optional control tier only —

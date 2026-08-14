@@ -94,6 +94,13 @@ sharing the pencil/transpose layer — implemented and tested:
   (`fields.jld2`, `les_meta.jld2`, `dns_meta.jld2`) — the downstream
   training/analysis pipeline applies unchanged. Validated against an
   independent serial FFTW oracle to 1e-12 on all processor grids.
+- Run-record hygiene: `statswriter` appends a per-interval CSV of the
+  K41 statistics (restart-continuable — the stationarity drift record),
+  and snapshot sidecars carry `eta`/`t_int`/`e`/`diss` measured at save
+  time. `spectral_from_rfft!` + `examples/symmetrycode_import.jl` import
+  a SymmetryCode full-rfft state into a snapshot, so twin validations
+  compare both solvers evolving the same field. Spectral `procgrid`
+  defaults to `(1, nranks)` slabs (measured fastest at 2-4 GPUs).
 - Example: `examples/spectral_hit.jl` (full production pattern).
 - Snellius multi-device validation: 4 H100s vs 1 H100 produce the same
   final field to machine precision (2e-16 relative, host-staged buffers;

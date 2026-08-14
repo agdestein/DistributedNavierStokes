@@ -553,6 +553,67 @@ end
     @test maximum(abs, Array(uh) .- ref) < 1e-14
 end
 
+@testset "spectral run record + import n=$nranks" begin
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+    s = spectral_setup(; n = 18, comm)
+    @test s.topo.procgrid == (1, nranks)   # slab default (S0: fastest)
+    uh = specvelocity(s)
+    spectral_randomfield!(uh, s; totalenergy = 0.3, kpeak = 2, seed = 3)
+    times = [0.02]
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.0, 0.02), Δt = 0.005, tstops = times,
+        processors = (;
+            stats = statswriter(; file = joinpath(dir, "stats.csv"), nupdate = 1),
+            snap = snapshotsaver(joinpath(dir, "snap"); times, meta = (; tag = "x")),
+        ),
+    )
+    MPI.Barrier(comm)
+    # stationarity record: initial row + one per step, statistics exact
+    lines = readlines(joinpath(dir, "stats.csv"))
+    @test startswith(lines[1], "t,step,e,uavg,diss,")
+    @test length(lines) == 6   # header + n = 0..4
+    row = parse.(Float64, split(lines[end], ","))
+    @test row[1] ≈ 0.02 atol = 1e-12
+    @test row[3] ≈ spectral_energy(uh, s) rtol = 1e-12
+    # sidecar carries the measured K41 numbers next to user meta
+    md = DNS.TOML.parsefile(joinpath(dir, "snap_0001.toml"))["meta"]
+    st = spectral_stats(uh, s)
+    @test md["tag"] == "x"
+    @test md["eta"] ≈ st.l_kol rtol = 1e-12
+    @test md["t_int"] ≈ st.t_int rtol = 1e-12
+    # restarted runs append to the record without a second header
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.02, 0.03), Δt = 0.005, nstart = 4,
+        processors = (;
+            stats = statswriter(; file = joinpath(dir, "stats.csv"), nupdate = 1),
+        ),
+    )
+    MPI.Barrier(comm)
+    @test count(startswith("t,step"), readlines(joinpath(dir, "stats.csv"))) == 1
+
+    # SymmetryCode-format import (serial, per rank): full-rfft (; x, y, z)
+    # arrays round trip exactly into the truncated state
+    sser = spectral_setup(; n = 18, comm = MPI.COMM_SELF)
+    uref = specvelocity(sser)
+    spectral_randomfield!(uref, sser; totalenergy = 0.3, kpeak = 2, seed = 9)
+    (; kcut, m) = sser
+    A = Array(uref)
+    F = ntuple(_ -> zeros(ComplexF64, 18 ÷ 2 + 1, 18, 18), 3)
+    finepos(g) = (k = DNS.compactfreq(g, m, kcut); k ≥ 0 ? k + 1 : 18 + k + 1)
+    for c = 1:3, k = 1:m, j = 1:m, i = 1:(kcut+1)
+        F[c][i, finepos(j), finepos(k)] = A[i, j, k, c]
+    end
+    ldir = mktempdir()
+    DNS.JLD2.jldsave(joinpath(ldir, "u.jld2"); u = (; x = F[1], y = F[2], z = F[3]))
+    uh2 = specvelocity(sser)
+    spectral_from_rfft!(uh2, DNS.JLD2.load(joinpath(ldir, "u.jld2"), "u"), sser)
+    @test Array(uh2) == A
+    rm(ldir; recursive = true)
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
 @testset "spectral host-staged buffers n=$nranks" begin
     s = spectral_setup(; n = 12, comm, mpibuf = :host)
     uh = specvelocity(s)

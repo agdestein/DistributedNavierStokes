@@ -184,28 +184,97 @@ function checkpointer(prefix; interval = 900.0, stopfile = nothing, keep = 2, me
 end
 
 """
-    snapshotsaver(prefix; times, meta = (;))
+    snapshotsaver(prefix; times, meta = (;), stats = true)
 
 Processor for [`spectral_solve!`](@ref) that saves the state the first time
 `t` reaches each entry of `times`, as `<prefix>_0001`, `<prefix>_0002`, … in
 order. Pass the same `times` as `tstops` to the solver so steps land on them
-exactly; the sidecar records the actual `t`.
+exactly; the sidecar records the actual `t`. With `stats = true` each
+sidecar's `meta` also carries the K41 numbers measured at save time —
+`eta` (Kolmogorov length), `t_int`, `e`, `diss` — so snapshot spacing in
+`t_int` units and filter widths in `Δ/η` are self-documenting
+(data-campaign hygiene; see [`etacells`](@ref)).
 """
-function snapshotsaver(prefix; times, meta = (;))
+function snapshotsaver(prefix; times, meta = (;), stats = true)
     times = sort!(Float64[t for t in times])
     inext = Ref(1)
     (state, s) -> begin
         while inext[] ≤ length(times) &&
             state.t ≥ times[inext[]] - 1e-10 * (abs(times[inext[]]) + 1)
+            m = if stats
+                st = spectral_stats(state.uh, s)
+                (; meta..., eta = st.l_kol, t_int = st.t_int, e = st.e, diss = st.diss)
+            else
+                meta
+            end
             spectral_save(
                 @sprintf("%s_%04d", prefix, inext[]),
                 state.uh,
                 s;
                 time = state.t,
                 step = state.n,
-                meta,
+                meta = m,
             )
             inext[] += 1
         end
     end
+end
+
+"""
+    statswriter(; file, nupdate = 10)
+
+Processor appending one CSV row of the K41 statistics
+([`spectral_stats`](@ref)) every `nupdate` steps: `t`, `step`, then every
+statistic (ε, L_int, t_int, η, …) — the stationarity drift record the run
+archive keeps next to the data. Rank 0 writes, append mode (a restarted
+run continues the series), header only when the file is new, flushed per
+row. Collective (statistics are reductions).
+"""
+function statswriter(; file, nupdate = 10)
+    io = Ref{Union{IOStream,Nothing}}(nothing)
+    (state, s) -> begin
+        state.n % nupdate == 0 || return nothing
+        st = spectral_stats(state.uh, s)
+        if s.topo.rank == 0
+            if io[] === nothing
+                mkpath(dirname(abspath(file)))
+                fresh = !isfile(file) || filesize(file) == 0
+                io[] = open(file, "a")
+                fresh && println(io[], join(("t", "step", string.(keys(st))...), ","))
+            end
+            println(io[], join((state.t, state.n, values(st)...), ","))
+            flush(io[])
+        end
+        nothing
+    end
+end
+
+"""
+    spectral_from_rfft!(uh, F, s)
+
+Fill the truncated state from spectral velocities `F` in full rfft layout —
+three arrays sized `(nf÷2+1, nf, nf)` (a tuple or `(; x, y, z)`, wrapped
+negative frequencies, the shared û = F[u]/n³ normalization), e.g. a
+SymmetryCode DNS state. Requires `nf ≥ 3kcut` (the source's dealiased cube
+must cover the state) and a single-rank setup: import once on `COMM_SELF`,
+[`spectral_save`](@ref) the result, and any decomposition restarts from
+the file (the V0 twin-validation recipe —
+`examples/symmetrycode_import.jl`).
+"""
+function spectral_from_rfft!(uh, F, s)
+    (; kcut, m) = s
+    prod(s.topo.procgrid) == 1 ||
+        error("serial import only — run on MPI.COMM_SELF, then spectral_save")
+    Fs = values(F)
+    length(Fs) == 3 || error("F must hold three velocity components")
+    nf = size(Fs[1], 2)
+    all(f -> size(f) == (nf ÷ 2 + 1, nf, nf), Fs) || error("expected full rfft layout")
+    nf ≥ 3kcut || error("source grid nf = $nf cannot hold kcut = $kcut retained modes")
+    A = Array{eltype(uh),4}(undef, kcut + 1, m, m, 3)
+    fine(g) = (k = compactfreq(g, m, kcut); k ≥ 0 ? k + 1 : nf + k + 1)
+    for c = 1:3, k = 1:m, j = 1:m, i = 1:(kcut+1)
+        A[i, j, k, c] = Fs[c][i, fine(j), fine(k)]
+    end
+    copyto!(uh, A)
+    uh
 end

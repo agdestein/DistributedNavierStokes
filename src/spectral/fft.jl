@@ -158,13 +158,15 @@ function spectral_transpose!(dst, src, plan, backend)
                 plan.subcomm,
             )
         else
-            copyto!(plan.hostsendbuf, plan.sendbuf)
+            # prefix copies: a reused device buffer may exceed this plan's
+            # payload (and its host mirrors, which are sized exactly)
+            copyto!(plan.hostsendbuf, 1, plan.sendbuf, 1, sum(plan.sendcounts))
             MPI.Alltoallv!(
                 MPI.VBuffer(plan.hostsendbuf, plan.sendcounts),
                 MPI.VBuffer(plan.hostrecvbuf, plan.recvcounts),
                 plan.subcomm,
             )
-            copyto!(plan.recvbuf, plan.hostrecvbuf)
+            copyto!(plan.recvbuf, 1, plan.hostrecvbuf, 1, sum(plan.recvcounts))
         end
     end
     unpack!(dst, plan.recvbuf, plan.recvboxes, backend)

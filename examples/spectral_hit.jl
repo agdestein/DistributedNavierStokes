@@ -77,6 +77,7 @@ state = spectral_solve!(;
     nstart,
     processors = (;
         log,
+        stats = statswriter(; file = joinpath(outdir, "stats.csv"), nupdate = 10),
         ckpt = checkpointer(ckpt; interval = 600.0, stopfile, meta = (; eref)),
     ),
 )
