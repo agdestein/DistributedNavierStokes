@@ -95,9 +95,15 @@ sharing the pencil/transpose layer — implemented and tested:
   training/analysis pipeline applies unchanged. Validated against an
   independent serial FFTW oracle to 1e-12 on all processor grids.
 - Example: `examples/spectral_hit.jl` (full production pattern).
+- Snellius multi-device validation: 4 H100s vs 1 H100 produce the same
+  final field to machine precision (2e-16 relative, host-staged buffers;
+  `examples/snellius/spectral_validate.sh`). The run caught a
+  decomposition-dependent adaptive-CFL bound — per-component velocity
+  maxima are now reduced globally before combining, so CFL-adaptive
+  trajectories (not just fixed-`Δt` ones) are decomposition invariant.
 
-Spectral not yet: 2D slices (`slicefile` schema), Snellius validation —
-DESIGN_SPECTRAL.md §8, §11 phases 4-5.
+Spectral not yet: 2D slices (`slicefile` schema), Snellius performance
+(UCX device-path retest / NCCL) — DESIGN_SPECTRAL.md §8, §11 phases 5-6.
 
 ## Quickstart
 

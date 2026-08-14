@@ -8,8 +8,13 @@ examples/snellius/spectral_h100.sh; §8's signal handling goes through a
 stop file touched by the job script's trap — signals never reach the Julia
 ranks), and the filtered-field/SFS research output in the SymmetryCode
 schemas (`les.jl`: LES-cube gather + rank-0 `sfs!` port, JLD2 as a hard
-dependency — pure Julia, no system-library coupling). Remaining: 2D slices
-(§8) and phases 5-6 (Snellius, optimizations).
+dependency — pure Julia, no system-library coupling). Phase 5 correctness
+validated on Snellius: 4 H100s vs 1 H100 produce the same field to
+machine precision (2e-16 relative, `examples/snellius/spectral_validate.sh`;
+the run exposed a decomposition-dependent adaptive-CFL bound, fixed by
+reducing per-component velocity maxima globally before combining).
+Remaining: 2D slices (§8), phase-5 performance work (UCX device-path
+retest / NCCL — validation ran host-staged), and phase 6.
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)
