@@ -99,7 +99,13 @@ sharing the pencil/transpose layer — implemented and tested:
   and snapshot sidecars carry `eta`/`t_int`/`e`/`diss` measured at save
   time. `spectral_from_rfft!` + `examples/symmetrycode_import.jl` import
   a SymmetryCode full-rfft state into a snapshot, so twin validations
-  compare both solvers evolving the same field. Spectral `procgrid`
+  compare both solvers evolving the same field — verified end-to-end by
+  the twin dry run (`examples/symmetrycode_twin_dns.jl` /
+  `symmetrycode_twin_check.jl`): both solvers replay a warmed forced 64³
+  field at matched fixed Δt, imported statistics match to 1e-14, and the
+  final-field difference (integrating-factor vs explicit viscous
+  treatment, the only scheme difference) vanishes at exactly 3rd order
+  in Δt. Spectral `procgrid`
   defaults to `(1, nranks)` slabs (measured fastest at 2-4 GPUs).
 - Example: `examples/spectral_hit.jl` (full production pattern).
 - Snellius multi-device validation: 4 H100s vs 1 H100 produce the same

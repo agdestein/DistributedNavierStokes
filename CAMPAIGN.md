@@ -287,6 +287,15 @@ Mapping: campaign items V0/R1/R2/R3, bursts, controls
   so V0 compares both solvers evolving the *same* field, with the
   statistical spectra/statistics check as a byproduct of `statswriter`
   + `dns_meta`. Round-trip import is tested exact.
+  **Local twin dry run passed 2026-08-14** (64³, ν = 5e-3, Re_λ ≈ 52,
+  kmax·η ≈ 1.7; `examples/symmetrycode_twin_dns.jl` +
+  `symmetrycode_twin_check.jl`): SymmetryCode warm-up → import → both
+  solvers replay the same forced window at matched fixed Δt. Statistics
+  of the imported field match to 1e-14; the final-field difference is
+  purely the viscous-treatment difference (integrating factor vs
+  explicit) and converges at exactly 3rd order: rel L2 5.8e-6 → 7.3e-7 →
+  9.1e-8 for Δt = 1/64 → 1/128 → 1/256 over T = 1. The V0 twin recipe is
+  verified end-to-end; on Snellius only scale changes.
 
 Not needed for this campaign: the 2D slice writer (nothing in the spec
 asks for it); Lundgren/linear forcing (optional control tier only —
