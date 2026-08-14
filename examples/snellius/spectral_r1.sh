@@ -16,22 +16,26 @@
 #
 #   sbatch --ntasks=4 --gpus=4 examples/snellius/spectral_r1.sh 1080
 #
-# The argument is positional because sbatch does not forward submission
+# Arguments are positional because sbatch does not forward submission
 # env to the job:
 #
 #   $1 = transform grid n (default 972), or "dummy" for a tiny end-to-end
 #        pipeline test (64³, short windows — run this first, every time)
+#   $2 = output directory (default ./output-r1[-dummy]); snapshots land
+#        in $2/snapshots, checkpoints/stats/schedule in $2. E.g.
+#        sbatch … spectral_r1.sh 972 /projects/prjs1757/dns2/r1
 #
 # NCCL transport needs the NCCL_jll stub dev'd and job-level --gpus (see
 # snellius/README.md); DNS_MPIBUF=host is the fallback.
 
 mode=${1:-972}
+outdir=$2
 if [[ $mode == dummy ]]; then
     export DNS_DUMMY=1
-    export DNS_OUTDIR=${DNS_OUTDIR:-output-r1-dummy}
+    export DNS_OUTDIR=${outdir:-output-r1-dummy}
 else
     export DNS_N=$mode
-    export DNS_OUTDIR=${DNS_OUTDIR:-output-r1}
+    export DNS_OUTDIR=${outdir:-output-r1}
 fi
 export DNS_MPIBUF=${DNS_MPIBUF:-nccl}
 
