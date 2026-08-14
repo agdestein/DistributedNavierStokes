@@ -18,6 +18,7 @@ CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 NCCL = "3fe64909-d7a1-4096-9b7d-7a0f12cf0f6b"
 
 [extensions]
+DistributedNavierStokesCUDAExt = "CUDA"
 DistributedNavierStokesNCCLExt = ["CUDA", "NCCL"]
 
 [compat]

@@ -25,6 +25,25 @@
 "Merge the batch dimension of a 4D array into dim 3."
 flat3(a) = reshape(a, size(a, 1), size(a, 2), :)
 
+# CUDA.jl's out-of-place real-FFT plans each carry a hidden field-sized
+# staging buffer: plan_rfft's is used only by `ldiv!` (which this package
+# never calls on device plans), and plan_brfft's exists to protect the
+# input of the destructive out-of-place C2R transform — but our backward
+# input (`âx`) is documented scratch. Together they cost ~6 field
+# equivalents and a full-field device copy per backward transform. The
+# CUDA package extension reclaims both; the generic fallbacks do nothing.
+
+"Free hidden staging buffers of an FFT plan we never `ldiv!`/protect (CUDA
+extension method; generic no-op)."
+trim_plan!(p) = p
+
+"""
+Backward real FFT `y ← plan * x` where `x` is scratch and may be
+destroyed. Generic: `mul!`. CUDA extension: executes cuFFT directly,
+skipping the input-protecting copy through the plan's (freed) buffer.
+"""
+brfft_scratch!(y, plan, x) = mul!(y, plan, x)
+
 "Shift a box's dim-3 range by `off` (batch stacking uses dim 3)."
 shift3(b, off) = (b[1], b[2], b[3] .+ off)
 
@@ -49,7 +68,11 @@ fields stacked along dim 4 of buffers whose dim-3 sizes are `srcdim3` and
 in a larger FFT buffer). `splitsrc`/`splitdst` = `(kcut, m, nfine)` remaps
 that side's dim-3 boxes from compact to fine positions via
 [`finesplit3`](@ref). With a single peer the receive buffer aliases the
-send buffer (pack → unpack, no copy, no MPI).
+send buffer (pack → unpack, no copy, no MPI). `reuse` takes another plan
+whose buffers are borrowed when large enough — the pipeline runs its two
+transpose stages strictly one after the other, so the stages can share
+one send/recv pair (the x↔z payload is the larger of the two; MPI/NCCL
+only ever touch the `counts` prefix of a buffer).
 """
 function plan_spectral_transpose(
     src,
@@ -64,6 +87,7 @@ function plan_spectral_transpose(
     splitdst = nothing,
     stagehost = false,
     ncclcomms = (nothing, nothing),
+    reuse = nothing,
 )
     a = swapped_axis(src, dst)
     (; procgrid, coords) = topo
@@ -80,8 +104,19 @@ function plan_spectral_transpose(
     batch(perpeer, d3) = [shift3(b, f * d3) for bs in perpeer for f in 0:(nb-1) for b in bs]
     sendcounts = nb .* map(b -> prod(length, b), sb)
     recvcounts = nb .* map(b -> prod(length, b), rb)
-    sendbuf = KernelAbstractions.allocate(backend, Complex{T}, sum(sendcounts))
     single = length(peers) == 1
+    # Borrow a reused buffer only if it is big enough and not already taken
+    # for the other role of THIS plan (send and recv must be distinct
+    # arrays unless single-peer-aliased).
+    pick(alloc, prev, need, taken...) =
+        prev !== nothing && length(prev) ≥ need && all(b -> b !== prev, taken) ? prev :
+        alloc(need)
+    devalloc(need) = KernelAbstractions.allocate(backend, Complex{T}, need)
+    hostalloc(need) = Vector{Complex{T}}(undef, need)
+    prev(f) = reuse === nothing ? nothing : getfield(reuse, f)
+    sendbuf = pick(devalloc, prev(:sendbuf), sum(sendcounts))
+    recvbuf = single ? sendbuf :
+              pick(devalloc, prev(:recvbuf), sum(recvcounts), sendbuf)
     (;
         subcomm = topo.subcomms[a],
         nccl = single ? nothing : ncclcomms[a],
@@ -90,10 +125,11 @@ function plan_spectral_transpose(
         sendcounts,
         recvcounts,
         sendbuf,
-        recvbuf = single ? sendbuf :
-                  KernelAbstractions.allocate(backend, Complex{T}, sum(recvcounts)),
-        hostsendbuf = stagehost && !single ? Vector{Complex{T}}(undef, sum(sendcounts)) : nothing,
-        hostrecvbuf = stagehost && !single ? Vector{Complex{T}}(undef, sum(recvcounts)) : nothing,
+        recvbuf,
+        hostsendbuf = stagehost && !single ?
+                      pick(hostalloc, prev(:hostsendbuf), sum(sendcounts)) : nothing,
+        hostrecvbuf = stagehost && !single ?
+                      pick(hostalloc, prev(:hostrecvbuf), sum(recvcounts)) : nothing,
     )
 end
 
@@ -170,7 +206,7 @@ function spec_to_phys!(v, uh, s)
     f.bzplan! * f.âz
     spectral_transpose!(flat3(f.âx), flat3(f.âz), f.zx, backend)
     @views f.âx[(kcut+2):end, :, :, :] .= 0
-    mul!(v, f.brplan, f.âx)   # brfft destroys âx; âx is scratch
+    brfft_scratch!(v, f.brplan, f.âx)   # destroys âx; âx is scratch
     KernelAbstractions.synchronize(backend)
     v
 end

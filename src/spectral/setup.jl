@@ -89,7 +89,10 @@ function spectral_setup(;
         lzt, lyt, topo, backend, T;
         nb, srcdim3 = n, dstdim3 = lyt.ldims[3],
         splitsrc = (kcut, m, n), stagehost, ncclcomms,
+        reuse = xz,   # stages never overlap; the x↔z payload is the larger
     )
+    rplan = trim_plan!(plan_rfft(rbuf, 1))
+    brplan = trim_plan!(plan_brfft(âx, n, 1))
 
     # Physical wavenumbers of the state layout's local ranges.
     kfac = T(2π / l)
@@ -137,8 +140,8 @@ function spectral_setup(;
             ây,
             σh,
             escratch,
-            rplan = plan_rfft(rbuf, 1),
-            brplan = plan_brfft(âx, n, 1),
+            rplan,
+            brplan,
             zplan! = plan_fft!(âz, 3),
             bzplan! = plan_bfft!(âz, 3),
             yplan! = plan_fft!(ây, 2),
