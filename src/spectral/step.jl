@@ -46,19 +46,21 @@ end
 
 """
 One IF-RK3 step of size `Δt`. `cache = (; ustart, du)` holds the two
-state-shaped registers. Returns the rank-local maximum-velocity estimate
-from the first stage (an upper bound `√(Σ_c max v_c²) ≥ max|v|`), for the
-caller's CFL control of the *next* step.
+state-shaped registers. Returns the rank-local per-component maxima of
+`v_c²` from the first stage; the caller must reduce each component over
+ranks *before* combining them into the CFL bound `√(Σ_c max v_c²) ≥
+max|v|` — reducing a locally combined bound would make the estimate (and
+the adaptive time step) depend on the processor grid.
 """
 function spectral_step!(uh, s, Δt, cache)
     (; backend, T) = s
     (; ustart, du) = cache
     copyto!(ustart, uh)
-    vmax = zero(T)
+    vmax = ntuple(_ -> zero(T), 3)
     for i = 1:3
         spectral_rhs!(du, uh, s)
         i == 1 &&
-            (vmax = sqrt(sum(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 1:3)))
+            (vmax = ntuple(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 3))
         ifstage_kernel!(backend)(
             uh,
             ustart,
@@ -111,10 +113,18 @@ function spectral_solve!(;
     spectral_project!(uh, s)
     h = s.l / s.n
     ϵ = eps(T)
+    # CFL bound √(Σ_c max v_c²): per-component maxima are reduced globally
+    # before combining, so the adaptive Δt (hence the whole trajectory) is
+    # identical for every rank count and processor grid.
+    vbuf = Vector{T}(undef, 3)
+    globalvmax(vloc) = begin
+        vbuf .= vloc
+        MPI.Allreduce!(vbuf, max, topo.cart)
+        sqrt(sum(vbuf))
+    end
     vmax = if isnothing(Δt)
         spec_to_phys!(s.fft.v, uh, s)
-        v = sqrt(sum(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 1:3))
-        MPI.Allreduce(v, max, topo.cart)
+        globalvmax(ntuple(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 3))
     else
         zero(T)
     end
@@ -135,7 +145,7 @@ function spectral_solve!(;
         Δtn = min(something(Δt, T(cfl) * h / (vmax + ϵ)), tnext - t)
         vloc = spectral_step!(uh, s, T(Δtn), cache)
         isnothing(forcing) || forcing(uh, s)
-        isnothing(Δt) && (vmax = MPI.Allreduce(vloc, max, topo.cart))
+        isnothing(Δt) && (vmax = globalvmax(vloc))
         t += Δtn
         n += 1
         state = (; uh, t, n)

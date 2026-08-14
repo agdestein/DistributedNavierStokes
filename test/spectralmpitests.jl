@@ -131,14 +131,18 @@ end
         uh = specvelocity(s)
         spectral_randomfield!(uh, s; totalenergy = 0.4, kpeak = 2, seed = 7)
         f = shellforcing(uh, s; shells = 1:2)
-        spectral_solve!(; uh, setup = s, tlims = (0.0, 0.1), Δt = 0.01, forcing = f)
+        # cfl (not Δt): also pins down the adaptive time step, whose CFL
+        # bound must reduce per-component maxima globally to be
+        # decomposition-invariant (caught on Snellius with 4 H100s vs 1).
+        state = spectral_solve!(; uh, setup = s, tlims = (0.0, 0.1), cfl = 0.4, forcing = f)
         spec_to_phys!(s.fft.v, uh, s)
-        s, uh, Array(s.fft.v)
+        s, uh, Array(s.fft.v), state.n
     end
-    spar, uhpar, vpar = runforced(comm, pg)
-    sser, uhser, vser = runforced(MPI.COMM_SELF, (1, 1))
+    spar, uhpar, vpar, npar = runforced(comm, pg)
+    sser, uhser, vser, nser = runforced(MPI.COMM_SELF, (1, 1))
     # The counter-based IC makes the whole forced trajectory
     # decomposition-invariant, not just the operators.
+    @test npar == nser
     ref = vser[spar.lphys.ranges[1], spar.lphys.ranges[2], spar.lphys.ranges[3], :]
     @test maximum(abs, vpar .- ref) < 1e-12
     # IC diagnostics
