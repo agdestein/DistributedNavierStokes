@@ -13,11 +13,12 @@ scaling experiment** (below), pulled ahead of the V0 physics twin: it
 produces every number the application needs without waiting on any
 physics decision.
 
-## S0 — scaling and footprint experiment (first action)
+## S0 — scaling and footprint experiment (**done 2026-08-14**, results below)
 
-One cheap job (~1–1.5 h on a 4-H100 allocation, ≈ 1 000–1 500 SBU against
-65 000 remaining) that replaces the application's guessed anchors with
-measurements.
+One cheap job (measured: ~20 min on a 4-H100 allocation, ≈ 300 SBU) that
+replaces the application's guessed anchors with measurements. Re-run
+after any transport/memory change: `sbatch examples/snellius/scaling.sh`
+(dummy pipeline check: `sbatch --time=00:20:00 examples/snellius/scaling.sh dummy`).
 
 ### What it measures, and what each number is for
 
@@ -91,27 +92,98 @@ measurements.
   per-GPU memory margins, the scaling exponent — and fix its
   "slab-decomposed" wording: the solver is pencil-decomposed).
 
-### Results
+### Results (2026-08-14, jobs 25618452 + 25618693, ≈ 300 SBU total)
 
-*(to be filled after the run)*
+All host-staged MPI buffers (`DNS_MPIBUF=host`) except the device smoke.
+Median per-step / transform-round-trip seconds, max per-GPU memory:
+
+| n | GPUs | procgrid | step (s) | round trip (s) | GB/GPU |
+|---|---|---|---|---|---|
+| 48 | 1 | (1,1) | 0.0033 | 0.0006 | 0.6 |
+| 96 | 1 | (1,1) | 0.0050 | 0.0009 | 0.8 |
+| 192 | 1 | (1,1) | 0.0157 | 0.0028 | 2.3 |
+| 384 | 1 | (1,1) | 0.116 | 0.021 | 13.9 |
+| 576 | 1 | (1,1) | 0.455 | 0.086 | 45.5 |
+| 810 | 1 | (1,1) | **OOM** | | > 94 |
+| 48 | 4 | (2,2) | 0.0065 | 0.0013 | 0.6 |
+| 96 | 4 | (2,2) | 0.0150 | 0.0033 | 0.7 |
+| 192 | 4 | (2,2) | 0.0986 | 0.0215 | 1.1 |
+| 810 | 2 | (2,1) | 4.93 | 1.08 | 69.6 |
+| 810 | 2 | (1,2) | 4.19 | 0.90 | 68.2 |
+| 972, 1080 | 2 | | **OOM** | | |
+| 810 | 4 | (2,2) | 5.64 | 1.27 | 36.5 |
+| 810 | 4 | (4,1) | 3.31 | 0.72 | 35.2 |
+| 810 | 4 | (1,4) | **2.28** | 0.489 | 34.5 |
+| 1080 | 4 | (2,2) | 13.3 | 2.82 | 85.5 |
+| 1080 | 4 | (1,4) | **5.53** | 1.19 | 80.7 |
+| 1200, 1296 | 4 | (2,2) | **OOM** | | |
+| 192 | 4 | device path | **crash** (UCX, unchanged) | | |
+
+Riders: `spectral_save` at 810³ wrote 3.55 GB at 1.3 GB/s to
+scratch-shared (2.7 s — checkpointing is negligible); one SFS sample
+(nles = 128, one Δ) 2.2 s; compile 2.6–16 s per process; `dt_cfl`
+bit-identical across all rank counts and grids (invariance fix visible in
+the data).
+
+**Findings:**
+
+1. **Transforms are ~95% of a step, and staging is ~88% of a
+   transform.** A step is 4.5 round-trip equivalents (3 stages × 1
+   backward + 2 forward): 4.5 × 0.489 ≈ 2.20 of the 2.28 s step at 810³
+   (1,4). Comparing the round trip against the single-GPU per-point FFT
+   rate, transpose+host-staging is ≈ 88% of it. Consequence: 810³ on 4
+   GPUs (2.28 s) is *slower* than the extrapolated single-GPU step
+   (≈ 1.8 s from the 576³ point at the measured ~N³·⁴ per-step slope).
+   Strong scaling *between* multi-GPU points is fine (2→4 GPUs: 4.19 →
+   2.28 s, 92% efficiency) — the loss is the flat staging tax. The
+   device path still crashes (UCX unchanged), so **NCCL is the measured
+   top priority**, with roughly 2–3× wall-clock at stake.
+2. **Memory is ≈ 2.2× the design ledger.** Fitted per-GPU model:
+   ≈ 3.5 GB constant + ≈ 31 field-equivalents/ranks (ledger: ~14).
+   Prime suspect: cuFFT plan work areas (six large plans, each O(data)).
+   Consequences: 810³ does **not** fit one H100 (R2 as "1 GPU each"
+   needs 2 GPUs, a leaner footprint, or SymmetryCode); 4 GPUs top out
+   near 1080³–1130³, so **R3 at 1200³ is currently infeasible** —
+   B_w = 1 batching plus FFT-workspace sharing lands ≈ 89 GB/GPU
+   (marginal), or R3 moves to 1080³.
+3. **Procgrid (1,p) beats squarest by 2–2.5×** ((1,4): 2.28 s vs (2,2):
+   5.64 s at 810³; same at 1080³ and at 2 ranks). The spectral default
+   (`squarest`) is the wrong choice at these rank counts; use explicit
+   `procgrid = (1, p)` until the default is changed.
+4. **Coarse plateau**: ≈ 3.3 ms/step floor on 1 GPU, ≈ 6.5 ms on 4
+   ranks — irrelevant at DNS sizes, relevant if the solver is ever used
+   at LES scale.
+5. **Pricing at the current host-staged path** (dt from the synthetic
+   field, caveat as designed): 810³ ≈ 2.5 GPU·h ≈ 470 SBU per time
+   unit — **9× the round-one anchor** (0.27 GPU·h/tu single-GPU);
+   1080³ ≈ 7.9 GPU·h ≈ 1500 SBU/tu. These numbers must not go into the
+   application as-is: fix the transport first, then re-run S0 (the
+   matrix is one cheap 20-min job).
 
 ## Readiness gaps, in priority order
 
 Mapping: campaign items V0/R1/R2/R3, bursts, controls
 (data-campaign.md §2–§6).
 
-- [ ] **1. Performance path** (blocks pricing → blocks the application).
-  All multi-rank operation is host-staged; transposes are the runtime.
-  S0 measures the comm share; then: retest the UCX device path on
-  current modules, and if still broken decide on the NCCL transport
-  (seam reserved, not built). The application text needs whichever
-  mode's measured numbers will actually be used.
-- [ ] **2. Memory margin at target sizes** (settles R1/R3's exact N).
-  Ledger says ~14 field-equivalents (B_w = 3): 810³ ≈ 60 GB —
-  borderline on one H100 (V0's single-GPU arm, all of R2); 1080³/2 ≈
-  70 GB/GPU — over; 1200³/4 ≈ 48 GB — fits. S0's probes measure it. If
-  810³ does not fit one GPU: implement the B_w = 1 product batching
-  (~9.5 equivalents) or run those arms on 2 GPUs / in SymmetryCode.
+- [ ] **1. NCCL transport** (blocks pricing → blocks the application).
+  S0 measured: transforms are ~95% of a step and host staging ~88% of a
+  transform; 4 GPUs at 810³ are slower than one (hypothetical) GPU, and
+  the UCX device path still crashes (retested 2026-08-14). The seam is
+  reserved, not built. After it lands: re-run S0 (one cheap job) and
+  only then write the application's compute numbers.
+- [ ] **2. Memory footprint reduction** (settles R1/R3's exact N).
+  S0 measured ≈ 31 field-equivalents + 3.5 GB/GPU against the ledger's
+  ~14: 810³ OOMs on one H100, 1200³ OOMs on 4. To do: find where the
+  extra ~17 equivalents live (cuFFT plan work areas suspected — measure,
+  then share/free work areas), implement B_w = 1 product batching
+  (−4.5 equivalents), update the ledger to match reality. Target:
+  1200³ on 4 GPUs (≈ 89 GB/GPU projected — marginal); fallback is R3
+  at 1080³ (fits today: 80.7 GB/GPU) and R2 on 2 GPUs per run.
+- [ ] **2b. Spectral procgrid default**: (1,p) beats `squarest` 2–2.5×
+  at 2 and 4 ranks (S0 finding 3). Either flip the spectral default to
+  slabs-in-dim-2 or benchmark the crossover at higher rank counts
+  first; meanwhile production scripts pass `procgrid = (1, p)`
+  explicitly.
 - [ ] **3. Filter bank generalization** (the campaign's "free axis",
   needed before R1/R2 data lands, not before S0/V0):
   - [ ] kernels beyond Gaussian: sharp cutoff, top-hat (spectral sinc,
