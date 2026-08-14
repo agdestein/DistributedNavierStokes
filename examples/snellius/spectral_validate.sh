@@ -2,7 +2,7 @@
 #SBATCH --job-name=spec-val
 #SBATCH --partition=gpu_h100
 #SBATCH --ntasks=4
-#SBATCH --gpus-per-task=1
+#SBATCH --gpus=4
 #SBATCH --cpus-per-task=16
 #SBATCH --time=00:30:00
 #SBATCH --output=spec-val-%j.out
@@ -28,11 +28,11 @@ cd "$SLURM_SUBMIT_DIR"
 rm -rf output-val1 output-val4
 
 echo "=== 4 ranks, 4 GPUs ==="
-DNS_OUTDIR=output-val4 srun --mpi=pmix --ntasks=4 --gpus-per-task=1 --exact \
+DNS_OUTDIR=output-val4 srun --mpi=pmix --ntasks=4 \
     julia --project=examples examples/snellius/spectral_validate.jl
 
 echo "=== 1 rank, 1 GPU ==="
-DNS_OUTDIR=output-val1 srun --mpi=pmix --ntasks=1 --gpus-per-task=1 --exact \
+DNS_OUTDIR=output-val1 srun --mpi=pmix --ntasks=1 \
     julia --project=examples examples/snellius/spectral_validate.jl
 
 echo "=== compare ==="

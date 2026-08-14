@@ -2,7 +2,7 @@
 #SBATCH --job-name=s0-scaling
 #SBATCH --partition=gpu_h100
 #SBATCH --ntasks=4
-#SBATCH --gpus-per-task=1
+#SBATCH --gpus=4
 #SBATCH --cpus-per-task=16
 #SBATCH --time=02:00:00
 #SBATCH --output=s0-scaling-%j.out
@@ -66,7 +66,7 @@ for cfg in "${CONFIGS[@]}"; do
     set -- $cfg
     ranks=$1; shift
     echo "=== ranks=$ranks args: $* ==="
-    if ! srun --mpi=pmix --ntasks="$ranks" --gpus-per-task=1 --exact \
+    if ! srun --mpi=pmix --ntasks="$ranks" \
         julia --project=examples examples/snellius/scaling.jl "$@"; then
         printf '\n[[run]]\nn = %s\nranks = %s\nargs = "%s"\nfailed = true\n' \
             "$1" "$ranks" "$*" >> "$S0_RESULTS"
