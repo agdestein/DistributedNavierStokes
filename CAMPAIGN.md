@@ -154,6 +154,25 @@ per-tu rate, on 4× the hardware); 1080³ ≈ 1.6 GPU·h ≈ 300 SBU/tu; 810³
 on 2 GPUs (R2 shape) ≈ 0.47 GPU·h ≈ 90 SBU/tu. These are the numbers the
 application can carry.
 
+**Memory-reduction rerun (2026-08-14, job 25629397, after freeing the
+hidden CUDA.jl real-FFT plan buffers and sharing the transpose pair;
+validated 4-vs-1 at 2.1e-16, bit-identical again):**
+
+| n | GPUs | procgrid | step (s) | GB/GPU (before → after) |
+|---|---|---|---|---|
+| 810 | 4 | (1,4) | 0.375 | 35.6 → 28.3 |
+| 972 | 2 | (1,2) | 1.354 | OOM → **92.7 (fits, tight)** |
+| 1080 | 4 | (1,4) | 1.082 | 81.9 → 64.6 |
+| 1200 | 4 | (1,4) | **2.022** | OOM → **87.9 (fits)** |
+| 810 | 1 | | | still OOM |
+| 1080 | 2 | (1,2) | | still OOM |
+| 1296 | 4 | (1,4) | | still OOM |
+
+1200³ pricing: dt_cfl 6.83e-4 → ≈ 3.3 GPU·h ≈ 630 SBU per time unit.
+Snapshot save at 1200³: 11.5 GB in 17 s (scratch-shared bandwidth
+varies 0.5-1.3 GB/s across jobs; still negligible against a law-mode
+cadence).
+
 **Findings:**
 
 1. **Transforms are ~95% of a step, and staging is ~88% of a
@@ -205,15 +224,21 @@ Mapping: campaign items V0/R1/R2/R3, bursts, controls
   `--gpus-per-task=1` — NCCL P2P needs all devices visible per rank).
   Production scripts default to NCCL now. Not done: the FV solver's
   transposes/halos still go over MPI only.
-- [ ] **2. Memory footprint reduction** (settles R1/R3's exact N).
-  S0 measured ≈ 31 field-equivalents + 3.5 GB/GPU against the ledger's
-  ~14: 810³ OOMs on one H100, 1200³ OOMs on 4. To do: find where the
-  extra ~17 equivalents live (cuFFT plan work areas suspected — measure,
-  then share/free work areas), implement B_w = 1 product batching
-  (−4.5 equivalents), update the ledger to match reality. Target:
-  1200³ on 4 GPUs (≈ 89 GB/GPU projected — marginal, and NCCL adds
-  ~1 GB/GPU); fallback is R3 at 1080³ (fits today: 81.9 GB/GPU under
-  NCCL at 1.10 s/step) and R2 on 2 GPUs per run.
+- [x] **2. Memory footprint reduction** — done 2026-08-14 (job
+  25629397). The extra memory was not cuFFT work areas (those are zero
+  for these plans) but hidden field-sized buffers inside CUDA.jl's
+  out-of-place real-FFT plan objects (rfft: `ldiv!`-only, never used;
+  brfft: input protection for a scratch buffer) plus double-allocated
+  transpose buffers. Freed via the CUDA package extension (which also
+  executes brfft directly — skips a full-field copy per backward
+  transform, ~2% faster steps) and one send/recv pair shared by both
+  transpose stages. 31 → ~25 equivalents; ledger rewritten
+  (DESIGN_SPECTRAL §9). **Measured capacities: 1200³ on 4 H100s fits
+  (87.9 GB/GPU, 2.02 s/step — R3 as specced is feasible, ≈ 630
+  SBU/tu); 972³ on 2 fits (92.7 GB, 1-2 GB headroom); 810³ on 1,
+  1080³ on 2, 1296³ on 4 still do not.** Remaining lever if those are
+  ever needed: B_w = 1 product batching (−4.5 equivalents, unbuilt).
+  R2 runs on 2 GPUs per realization (0.87 s/step at 810³).
 - [ ] **2b. Spectral procgrid default**: (1,p) beats `squarest` 2–2.5×
   at 2 and 4 ranks (S0 finding 3). Either flip the spectral default to
   slabs-in-dim-2 or benchmark the crossover at higher rank counts

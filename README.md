@@ -113,9 +113,16 @@ sharing the pencil/transpose layer — implemented and tested:
   `--gpus-per-task`); on clusters where CUDA.jl uses the local toolkit,
   dev the stub `examples/snellius/NCCL_jll` (see snellius/README.md).
 
-Spectral not yet: 2D slices (`slicefile` schema), memory-footprint
-reduction (measured ≈ 31 field-equivalents vs the ledger's ~14; 1200³
-does not fit 4 H100s yet) — DESIGN_SPECTRAL.md §8-9, CAMPAIGN.md.
+- Memory: hidden field-sized buffers in CUDA.jl's real-FFT plan objects
+  are freed by the CUDA package extension (which also runs the backward
+  transform without the input-protecting copy), and the two transpose
+  stages share one send/recv buffer pair — ~25 field-equivalents
+  measured (ledger: DESIGN_SPECTRAL §9). 1200³ runs on one 4×H100 node
+  (87.9 GB/GPU, 2.0 s/step, NCCL).
+
+Spectral not yet: 2D slices (`slicefile` schema), `B_w = 1` product
+batching (would fit 810³ on one GPU / 1296³ on four) —
+DESIGN_SPECTRAL.md §8-9, CAMPAIGN.md.
 
 ## Quickstart
 

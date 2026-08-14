@@ -16,9 +16,11 @@ reducing per-component velocity maxima globally before combining).
 Phase-5 performance: the NCCL transpose transport (`mpibuf = :nccl`,
 package extension) replaced host-staged MPI as the production path —
 5-11× faster steps, near-ideal 4-GPU strong scaling, validated to
-2e-16 (CAMPAIGN.md S0; the UCX device path remains broken). Remaining:
-2D slices (§8), memory-footprint reduction (§9's ledger measures ≈ 31
-equivalents in practice — cuFFT work areas suspected), and phase 6.
+2e-16 (CAMPAIGN.md S0; the UCX device path remains broken). Memory
+footprint reduced 31 → ~25 equivalents (hidden CUDA.jl real-FFT plan
+buffers freed, transpose stages share one buffer pair — §9): 1200³ runs
+on one 4×H100 node. Remaining: 2D slices (§8), `B_w = 1` batching if
+810³-on-one-GPU or 1296³ are ever needed, and phase 6.
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)
@@ -282,6 +284,8 @@ Working numbers, FP64, transform grid N³ (retained grid 2N/3 per
 direction). One N³ real field = 8·N³ bytes ≡ "1 equivalent"; a truncated
 spectral field is 0.30 equivalents.
 
+Ledger as implemented and **measured** (CAMPAIGN.md S0, August 2026):
+
 | What | Equivalents |
 |---|---|
 | û | 0.9 |
@@ -289,18 +293,34 @@ spectral field is 0.30 equivalents.
 | du | 0.9 |
 | physical velocities v (3, simultaneous) | 3.0 |
 | product buffers (batch `B_w = 3`) | 3.0 |
-| pipeline complex ping-pong (× batch) | ~4.0 |
-| transpose send/recv | ~1.3 |
-| **Total** | **~14 (B_w = 3), ~9.5 (B_w = 1)** |
+| pipeline complex ping-pong âx + âz + ây | 6.4 |
+| σ̂ product batch | 0.9 |
+| transpose send+recv (one pair, shared by both stages) | ~4.0 |
+| **Explicit total** | **~20 (B_w = 3)** |
+| CUDA/cuFFT/NCCL runtime overhead (measured) | ~5 |
+| **Measured total** | **~25 + ~2 GB/GPU constant** |
 
-≈ 80-110 bytes/point. Targets (H100 94 GB, ~60 usable; A100 40 GB ≈ 2.5×
-the GPU count):
+Two reclamation passes keep it at 25 rather than 31: CUDA.jl's
+out-of-place real-FFT plans each hide a field-sized buffer (rfft:
+`ldiv!`-only; brfft: input protection for what is scratch here) — freed
+by the CUDA package extension, which also executes the backward
+transform directly, skipping a full-field copy per call; and the two
+transpose stages share one send/recv pair (they never overlap; the x↔z
+payload is the larger). History: the first at-scale measurement found 31
+equivalents against this table's original ~14 — the ping-pong/transpose
+rows were undercounted and the plan buffers unknown.
 
-| Transform grid | Total | H100s | Re_λ vs 810³ single-GPU |
-|---|---|---|---|
-| 2048³ | ~0.7 TB | ~16 (4 nodes) | ×1.9 |
-| 3072³ | ~2.3 TB | ~40-48 | ×2.4 |
-| 4096³ | ~5.5 TB | ~96-128 | ×3.0 |
+≈ 200 bytes/point measured. Verified H100 (94 GB) capacities: 1200³ on 4
+(87.9 GB/GPU), 972³ on 2 (92.7 GB — 1-2 GB headroom), 1080³ on 4
+(64.6 GB); 810³ on 1, 1080³ on 2, and 1296³ on 4 do **not** fit. The
+remaining lever is `B_w = 1` product batching (−4.5 equivalents: rbuf,
+σ̂, and ping-pong shrink; would put 810³ on one GPU and 1296³ on 4 within
+reach) — unbuilt, take it only if a campaign needs those points.
+
+| Transform grid | Total (25 eq) | H100s |
+|---|---|---|
+| 2048³ | ~1.7 TB | ~24 (6 nodes) |
+| 3072³ | ~5.8 TB | ~72-80 |
 
 Every feature wanting a persistent 3D array argues against this table
 (same discipline as DESIGN.md §8).
