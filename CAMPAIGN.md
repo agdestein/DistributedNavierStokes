@@ -125,6 +125,35 @@ scratch-shared (2.7 s — checkpointing is negligible); one SFS sample
 bit-identical across all rank counts and grids (invariance fix visible in
 the data).
 
+**NCCL transport rerun (2026-08-14, job 25619132, after the `:nccl`
+transpose transport landed; correctness gated by the 4-vs-1 validation at
+2.1e-16, bit-identical to the host-staged result):**
+
+| n | GPUs | procgrid | step (s) | vs host | round trip (s) | GB/GPU |
+|---|---|---|---|---|---|---|
+| 48 | 4 | (2,2) | 0.0038 | 1.7× | 0.0007 | 1.3 |
+| 96 | 4 | (2,2) | 0.0045 | 3.3× | 0.0009 | 1.3 |
+| 192 | 4 | (2,2) | 0.0095 | 10.4× | 0.0019 | 1.7 |
+| 810 | 2 | (1,2) | 0.870 | 4.8× | 0.172 | 68.7 |
+| 810 | 4 | (2,2) | 0.523 | 10.8× | 0.106 | 37.1 |
+| 810 | 4 | (4,1) | 0.438 | 7.6× | 0.087 | 36.3 |
+| 810 | 4 | (1,4) | **0.383** | 5.9× | 0.074 | 35.6 |
+| 1080 | 4 | (2,2) | 1.339 | 9.9× | 0.267 | 86.1 |
+| 1080 | 4 | (1,4) | **1.102** | 5.0× | 0.215 | 81.9 |
+
+NCCL findings: **steps are 5–11× faster than host-staged**. 810³ on 4
+GPUs runs at 4.6× the extrapolated single-GPU step — essentially ideal
+strong scaling (2→4 GPUs: 2.3×) — and the communication share of a
+transform round trip drops from ~88% to ~20% (0.074 s round trip vs
+≈ 0.06 s local FFT work). Procgrid (1,p) still wins, now by 1.37× rather
+than 2.5×. NCCL costs ~1 GB/GPU extra (1080³ (2,2) at 86.1 GB still
+fits). Wall-clock: 810³ is now 2.6× faster than round one's single-GPU
+solver; 1080³ runs at 1.10 s/step. **Updated pricing** (same synthetic-dt
+caveat): 810³ ≈ 0.41 GPU·h ≈ 80 SBU per time unit (1.5× round one's
+per-tu rate, on 4× the hardware); 1080³ ≈ 1.6 GPU·h ≈ 300 SBU/tu; 810³
+on 2 GPUs (R2 shape) ≈ 0.47 GPU·h ≈ 90 SBU/tu. These are the numbers the
+application can carry.
+
 **Findings:**
 
 1. **Transforms are ~95% of a step, and staging is ~88% of a
@@ -165,20 +194,26 @@ the data).
 Mapping: campaign items V0/R1/R2/R3, bursts, controls
 (data-campaign.md §2–§6).
 
-- [ ] **1. NCCL transport** (blocks pricing → blocks the application).
-  S0 measured: transforms are ~95% of a step and host staging ~88% of a
-  transform; 4 GPUs at 810³ are slower than one (hypothetical) GPU, and
-  the UCX device path still crashes (retested 2026-08-14). The seam is
-  reserved, not built. After it lands: re-run S0 (one cheap job) and
-  only then write the application's compute numbers.
+- [x] **1. NCCL transport** — done 2026-08-14 (commit 83b9f65 + job
+  scripts). `mpibuf = :nccl` sends the packed transpose buffers over
+  NCCL grouped send/recv (package extension, `using CUDA, NCCL`);
+  correctness validated 4-vs-1 at 2.1e-16; S0 rerun shows 5–11× faster
+  steps and near-ideal strong scaling (results above). Cluster
+  specifics that were needed: the NCCL_jll stub (local-toolkit CUDA
+  refuses JLL artifacts; `examples/snellius/NCCL_jll`, dev'd
+  machine-locally) and job-level GPU allocation (`--gpus=4`, never
+  `--gpus-per-task=1` — NCCL P2P needs all devices visible per rank).
+  Production scripts default to NCCL now. Not done: the FV solver's
+  transposes/halos still go over MPI only.
 - [ ] **2. Memory footprint reduction** (settles R1/R3's exact N).
   S0 measured ≈ 31 field-equivalents + 3.5 GB/GPU against the ledger's
   ~14: 810³ OOMs on one H100, 1200³ OOMs on 4. To do: find where the
   extra ~17 equivalents live (cuFFT plan work areas suspected — measure,
   then share/free work areas), implement B_w = 1 product batching
   (−4.5 equivalents), update the ledger to match reality. Target:
-  1200³ on 4 GPUs (≈ 89 GB/GPU projected — marginal); fallback is R3
-  at 1080³ (fits today: 80.7 GB/GPU) and R2 on 2 GPUs per run.
+  1200³ on 4 GPUs (≈ 89 GB/GPU projected — marginal, and NCCL adds
+  ~1 GB/GPU); fallback is R3 at 1080³ (fits today: 81.9 GB/GPU under
+  NCCL at 1.10 s/step) and R2 on 2 GPUs per run.
 - [ ] **2b. Spectral procgrid default**: (1,p) beats `squarest` 2–2.5×
   at 2 and 4 ranks (S0 finding 3). Either flip the spectral default to
   slabs-in-dim-2 or benchmark the crossover at higher rank counts

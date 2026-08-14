@@ -2,7 +2,7 @@
 #SBATCH --job-name=hit-h100
 #SBATCH --partition=gpu_h100
 #SBATCH --ntasks=4
-#SBATCH --gpus-per-task=1
+#SBATCH --gpus=4
 #SBATCH --cpus-per-task=16
 #SBATCH --time=01:00:00
 #SBATCH --signal=B:USR1@900
@@ -19,10 +19,12 @@
 # coordination goes through the shared filesystem — no signal handling in
 # Julia, no signals to MPI ranks mid-collective.
 
-# Host-staged MPI buffers: see h100.sh for the UCX/CUDA story. NOTE: this
-# hurts the spectral solver far more than the FV one (transposes are the
-# runtime) — retest the device path / consider NCCL before big campaigns.
-export DNS_MPIBUF=host
+# NCCL transpose transport: 5-11x faster steps than host-staged MPI
+# (CAMPAIGN.md S0). Needs the NCCL_jll stub dev'd (snellius/README.md)
+# and job-level GPU allocation (--gpus=4, not --gpus-per-task: NCCL P2P
+# needs every device visible to every rank; ranks pick their device by
+# node-local rank). Fall back with DNS_MPIBUF=host if NCCL misbehaves.
+export DNS_MPIBUF=${DNS_MPIBUF:-nccl}
 export DNS_OUTDIR=${DNS_OUTDIR:-output-hit}
 
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0

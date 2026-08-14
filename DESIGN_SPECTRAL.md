@@ -13,8 +13,12 @@ validated on Snellius: 4 H100s vs 1 H100 produce the same field to
 machine precision (2e-16 relative, `examples/snellius/spectral_validate.sh`;
 the run exposed a decomposition-dependent adaptive-CFL bound, fixed by
 reducing per-component velocity maxima globally before combining).
-Remaining: 2D slices (§8), phase-5 performance work (UCX device-path
-retest / NCCL — validation ran host-staged), and phase 6.
+Phase-5 performance: the NCCL transpose transport (`mpibuf = :nccl`,
+package extension) replaced host-staged MPI as the production path —
+5-11× faster steps, near-ideal 4-GPU strong scaling, validated to
+2e-16 (CAMPAIGN.md S0; the UCX device path remains broken). Remaining:
+2D slices (§8), memory-footprint reduction (§9's ledger measures ≈ 31
+equivalents in practice — cuFFT work areas suspected), and phase 6.
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)

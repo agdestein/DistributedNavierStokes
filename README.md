@@ -102,8 +102,20 @@ sharing the pencil/transpose layer — implemented and tested:
   maxima are now reduced globally before combining, so CFL-adaptive
   trajectories (not just fixed-`Δt` ones) are decomposition invariant.
 
-Spectral not yet: 2D slices (`slicefile` schema), Snellius performance
-(UCX device-path retest / NCCL) — DESIGN_SPECTRAL.md §8, §11 phases 5-6.
+- NCCL transpose transport (`spectral_setup(; mpibuf = :nccl)`, package
+  extension loaded by `using CUDA, NCCL`): the packed transpose buffers
+  travel over NCCL grouped send/recv on the current CUDA stream,
+  bypassing MPI/UCX for the bandwidth-critical path (MPI keeps setup,
+  reductions, I/O). On 4 H100s this makes steps 5-11× faster than
+  host-staged MPI with near-ideal strong scaling, and matches the
+  single-GPU field to 2e-16 (CAMPAIGN.md S0). Needs one distinct GPU
+  per rank and job-level GPU allocation (`--gpus=4`, not
+  `--gpus-per-task`); on clusters where CUDA.jl uses the local toolkit,
+  dev the stub `examples/snellius/NCCL_jll` (see snellius/README.md).
+
+Spectral not yet: 2D slices (`slicefile` schema), memory-footprint
+reduction (measured ≈ 31 field-equivalents vs the ledger's ~14; 1200³
+does not fit 4 H100s yet) — DESIGN_SPECTRAL.md §8-9, CAMPAIGN.md.
 
 ## Quickstart
 
