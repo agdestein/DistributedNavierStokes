@@ -592,6 +592,16 @@ end
     MPI.Barrier(comm)
     @test count(startswith("t,step"), readlines(joinpath(dir, "stats.csv"))) == 1
 
+    # checkpoint-restart fast-forward: entries strictly before tstart are
+    # skipped without saving (they exist from the earlier job), an entry at
+    # tstart is re-saved, and numbering stays global-index
+    resnap = snapshotsaver(joinpath(dir, "re"); times = [0.02, 0.03], tstart = 0.03)
+    resnap((; uh, t = 0.03, n = 7), s)
+    MPI.Barrier(comm)
+    @test !isfile(joinpath(dir, "re_0001.toml"))
+    @test isfile(joinpath(dir, "re_0002.toml"))
+    @test DNS.TOML.parsefile(joinpath(dir, "re_0002.toml"))["time"] == 0.03
+
     # SymmetryCode-format import (serial, per rank): full-rfft (; x, y, z)
     # arrays round trip exactly into the truncated state
     sser = spectral_setup(; n = 18, comm = MPI.COMM_SELF)

@@ -282,6 +282,15 @@ step, Δt, forcing shell reference energies, IC seed/config. Decisions:
   resubmits itself while the target time is not reached. Restarting on a
   different rank count must reproduce trajectories to FFT-reordering
   roundoff (tested, §10).
+- Snapshot series + checkpointing compose only with the `snapshotsaver`
+  `tstart` fast-forward: on restart the saver must skip the schedule
+  entries an earlier job already saved (they are numbered by global
+  index in the times list, so numbering is restart-invariant), else the
+  initial processor call rewrites every earlier index with the
+  restart-time field. Drivers pass the checkpoint's time (see
+  `examples/spectral_r1.jl`, the production template: warm-up →
+  measured-t_int schedule persisted to TOML → snapshot production, all
+  three phases restartable).
 
 ## 9. Memory and precision budget
 

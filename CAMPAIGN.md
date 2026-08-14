@@ -308,3 +308,26 @@ cadences via `tstops`; decomposition invariance incl. adaptive CFL
 (Snellius 4×H100-vs-1, 2e-16); all campaign grid sizes divisible by 3 and
 FFT-smooth (FFT lengths are always n; the prime m = 2n/3+1 is never
 transformed); η recorded as `l_kol` in `statistics_dns`.
+
+## Run scripts
+
+- **R1** (`examples/spectral_r1.jl` + `snellius/spectral_r1.sh`, built
+  2026-08-14): the ν = 1e-4 resolution-check DNS. Defaults to 972³ on
+  2 H100s (the measured tight fit; `sbatch --ntasks=4 --gpus=4 …
+  spectral_r1.sh 1080` for the roomier variant at ~1.5× the SBU/tu).
+  Three restartable phases: warm-up to t = 25 (≈ 3 nominal t_int, drift
+  in stats.csv), a sampling schedule fixed from the warm-up-end
+  *measured* t_int (law: every t_int/2 over 10 t_int; test-style: 40
+  over the first t_int) persisted to schedule.toml, then production with
+  raw-f64 snapshots (P1 — the bank runs offline afterwards via
+  `spectral_filterbank.jl`). `sbatch spectral_r1.sh dummy` runs the
+  whole pipeline tiny — do that before every real submission. Estimated
+  ≈ 11k SBU / ~30 h wall at 972³ (3 auto-resubmitting 12 h chunks).
+  Building it exposed and fixed a production-blocking restart bug:
+  `snapshotsaver` now takes `tstart` (the checkpoint's time) so restarts
+  skip already-saved entries instead of rewriting every earlier snapshot
+  index with the restart-time field. Verified locally end-to-end at 256³
+  incl. a mid-production stop/resume: earlier snapshots byte-untouched,
+  schedule reused, stats.csv single-headered, exact completion.
+  **Launch waits on the budget decision (§7 sequencing: R1–R3 after the
+  extension is confirmed).**

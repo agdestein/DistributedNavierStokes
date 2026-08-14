@@ -184,7 +184,7 @@ function checkpointer(prefix; interval = 900.0, stopfile = nothing, keep = 2, me
 end
 
 """
-    snapshotsaver(prefix; times, meta = (;), stats = true)
+    snapshotsaver(prefix; times, meta = (;), stats = true, tstart = -Inf)
 
 Processor for [`spectral_solve!`](@ref) that saves the state the first time
 `t` reaches each entry of `times`, as `<prefix>_0001`, `<prefix>_0002`, … in
@@ -194,10 +194,18 @@ sidecar's `meta` also carries the K41 numbers measured at save time —
 `eta` (Kolmogorov length), `t_int`, `e`, `diss` — so snapshot spacing in
 `t_int` units and filter widths in `Δ/η` are self-documenting
 (data-campaign hygiene; see [`etacells`](@ref)).
+
+When restarting from a checkpoint, pass its time as `tstart`: entries
+strictly before it are skipped *without* saving (they exist from the
+earlier job — without the skip, the initial processor call would rewrite
+every earlier index with the restart-time field). File numbering is by
+position in the full `times` list, so it is restart-invariant; an entry
+equal to `tstart` is re-saved, byte-identical since restarts are exact.
 """
-function snapshotsaver(prefix; times, meta = (;), stats = true)
+function snapshotsaver(prefix; times, meta = (;), stats = true, tstart = -Inf)
     times = sort!(Float64[t for t in times])
-    inext = Ref(1)
+    i0 = findfirst(t -> t ≥ tstart - 1e-10 * (abs(t) + 1), times)
+    inext = Ref(something(i0, length(times) + 1))
     (state, s) -> begin
         while inext[] ≤ length(times) &&
             state.t ≥ times[inext[]] - 1e-10 * (abs(times[inext[]]) + 1)

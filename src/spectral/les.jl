@@ -486,6 +486,12 @@ SymmetryCode's artifact schemas under `dir` (rank 0, atomic):
 
 Every cell needs `M/2 ≤ kcut`; `Δ = Δfac·l/M`. The state must be mean-free
 (see the module header note).
+
+Samples accumulate in memory and the artifacts are written only after the
+*last* time — this processor does not survive checkpoint restarts. For
+runs long enough to need the checkpointer, save raw snapshots
+([`snapshotsaver`](@ref)) and build the bank offline
+([`sfs_offline`](@ref)) instead.
 """
 function sfswriter(s; dir, times, nles = nothing, filters = nothing, cells = nothing,
     protectshells = 2, outtype = _ -> Float64)
