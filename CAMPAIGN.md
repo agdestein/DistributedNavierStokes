@@ -244,24 +244,31 @@ Mapping: campaign items V0/R1/R2/R3, bursts, controls
   slabs-in-dim-2 or benchmark the crossover at higher rank counts
   first; meanwhile production scripts pass `procgrid = (1, p)`
   explicitly.
-- [ ] **3. Filter bank generalization** (the campaign's "free axis",
-  needed before R1/R2 data lands, not before S0/V0):
-  - [ ] kernels beyond Gaussian: sharp cutoff, top-hat (spectral sinc,
-    negative lobes intended), optional Helmholtz — small spectral
-    kernels in `les.jl`, uniform low-k carve-out composite;
-  - [ ] multiple coarse grids M ∈ {64, 128, 256} per run (generalize
-    `lessampler`/`sfswriter` or instantiate one per M); Float32 output
-    option for the M = 256 bank cells (raw states stay Float64);
-  - [ ] widths pinned in Δ/η (currently Δ/h factors) using measured η;
-  - [ ] directory/metadata naming for the (kernel, Δ, M) cell axis —
-    extends the SymmetryCode `delta=<Δf>/` schema; decide deliberately,
-    the downstream loader consumes it.
-- [ ] **4. Offline filtering driver.** The bank must be regenerable from
-  the raw store (P1), but filtering only runs in-situ today. Pieces
-  exist (`spectral_load!` + gather + `sfs_sample!`); needed: a
-  multi-GPU driver looping stored snapshots through the bank (σ̂ needs
-  the full DNS-grid nonlinearity — not a serial job at 1200³). The
-  kinematic-null pass (randomized phases, refilter) lives here too.
+- [x] **3. Filter bank generalization** — done 2026-08-14. A bank cell
+  is `(; M, kernel, Δfac)` (+ optional `Δη` label): kernels
+  `:gaussian | :cutoff | :tophat | :helmholtz` sharing the low-k
+  carve-out composite; multiple M per run via one gather at the largest
+  M with rank-0 cube extraction (identical to a direct gather);
+  `etacells(...)` pins widths in Δ/η at measured η with the
+  choose-M-per-column window rule; `outtype = M -> M ≥ 256 ? Float32 :
+  Float64` for bulky cells. Naming: a single-M all-Gaussian bank keeps
+  SymmetryCode's flat `delta=<Δf>/` (loader-compatible, plus new
+  `kernel`/`M`/`delta_eta` metadata keys); any other bank nests
+  `filter=<kernel>/M=<M>/delta=<Δf>/`, so the downstream loader pointed
+  at one (kernel, M) directory sees the flat layout it expects.
+  Validated against a fresh FFTW oracle (all four kernels × two Ms, all
+  processor grids, offline and legacy paths).
+- [x] **4. Offline filtering driver** — done 2026-08-14. `sfs_offline`
+  runs the same collector as the in-situ writer over stored snapshots
+  (multi-GPU — σ̂ needs the full DNS-grid nonlinearity);
+  `examples/spectral_filterbank.jl` self-configures from the snapshot
+  sidecars and uses the leanest alias-free transform grid (n = 3·kcut,
+  independent of the run's grid). The kinematic null is
+  `spectral_phaserandomize!` (counter-based, Hermitian-safe: preserves
+  every modal energy and incompressibility exactly, destroys phase
+  correlations, decomposition-invariant — tested) via
+  `DNS_PHASESEED`/`phaseseed`. GPU end-to-end verified (4 ranks:
+  snapshots → bank → null bank).
 - [ ] **5. Run-record hygiene** (small): statistics time series (ε,
   L_int, t_int, η per interval) written to file by a processor for the
   stationarity drift check; η/t_int stamped into snapshot sidecars.

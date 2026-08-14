@@ -44,6 +44,6 @@ export spectral_setup, spectral_solve!, specvelocity, spectral_velocityfield!,
     spectral_dissipation, spectral_maxdiv, spectral_stats, spectral_spectrum,
     shellforcing, shell_energies, spec_to_phys!, phys_to_spec!,
     spectral_save, spectral_load!, snapshotsaver, checkpointer, spectral_latest,
-    sfswriter
+    sfswriter, sfs_offline, etacells, spectral_phaserandomize!
 
 end

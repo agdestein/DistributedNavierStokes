@@ -94,3 +94,50 @@ taylorgreen!(uh, s; V0 = 1) = spectral_velocityfield!(
     y = (x, y, z) -> -V0 * cospi(2x / s.l) * sinpi(2y / s.l) * cospi(2z / s.l),
     z = (x, y, z) -> zero(V0 * x),
 )
+
+# Phase randomization (the kinematic-null transform): every retained mode
+# is multiplied by a unit-modulus random phase, preserving |û(k)| — hence
+# energy and all spectra — and incompressibility (k·û = 0 survives a
+# scalar factor), while destroying all phase correlations. Hermitian
+# symmetry: modes with kx > 0 have their conjugates outside the stored
+# half-space; the kx = 0 plane pairs (0, k2, k3) with (0, -k2, -k3), so
+# both members draw the phase from the pair's canonical representative
+# and the non-canonical member takes the conjugate. Counter-based like the
+# IC noise, so the result is decomposition-invariant.
+
+@kernel function phaserand_kernel!(uh, seed, @Const(ikx), @Const(iky), @Const(ikz), kcut)
+    i, j, k = @index(Global, NTuple)
+    T = real(eltype(uh))
+    @inbounds begin
+        k1, k2, k3 = Int(ikx[i, 1, 1]), Int(iky[1, j, 1]), Int(ikz[1, 1, k])
+        if (k1, k2, k3) != (0, 0, 0)
+            canon = k1 > 0 || k2 > 0 || (k2 == 0 && k3 > 0)
+            c2, c3 = canon ? (k2, k3) : (-k2, -k3)
+            key = (UInt64(k1) * (2kcut + 2) + UInt64(c2 + kcut)) * (2kcut + 2) +
+                  UInt64(c3 + kcut)
+            u = ((splitmix64(seed + key) >> 11) + T(0.5)) * T(0x1p-53)
+            s, c = sincospi(2 * u)
+            ph = Complex{T}(c, ifelse(canon, s, -s))
+            for cc = 1:3
+                uh[i, j, k, cc] *= ph
+            end
+        end
+    end
+end
+
+"""
+    spectral_phaserandomize!(uh, s; seed = 0)
+
+Randomize the phase of every retained mode (counter-based, Hermitian-safe;
+the mean mode is untouched): preserves the energy in each mode and the
+divergence-free property exactly, destroys phase correlations — the
+kinematic null of [`sfs_offline`](@ref).
+"""
+function spectral_phaserandomize!(uh, s; seed = 0)
+    phaserand_kernel!(s.backend)(
+        uh, UInt64(seed), s.ikxr, s.ikyr, s.ikzr, UInt64(s.kcut);
+        ndrange = size(uh)[1:3],
+    )
+    KernelAbstractions.synchronize(s.backend)
+    uh
+end

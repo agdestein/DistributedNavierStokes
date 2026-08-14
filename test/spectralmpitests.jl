@@ -401,6 +401,158 @@ end
     rank == 0 && rm(dir; recursive = true)
 end
 
+@testset "spectral filter bank offline n=$nranks pg=$pg" for pg in procgrids(nranks)
+    rank = MPI.Comm_rank(comm)
+    dir = MPI.bcast(rank == 0 ? mktempdir() : nothing, comm)
+    N = 24
+    visc = 4e-3
+    times = [0.0, 0.02]
+    cells = [
+        (; M = 12, kernel = :gaussian, Δfac = 2.0),
+        (; M = 12, kernel = :tophat, Δfac = 3.0),
+        (; M = 8, kernel = :cutoff, Δfac = 2.0),
+        (; M = 8, kernel = :helmholtz, Δfac = 2.5, Δη = 27.0),
+    ]
+    s = spectral_setup(; n = N, visc, comm, procgrid = pg)
+    uh = specvelocity(s)
+    spectral_randomfield!(uh, s; totalenergy = 0.3, kpeak = 2, seed = 13)
+    spectral_solve!(;
+        uh, setup = s, tlims = (0.0, 0.02), Δt = 0.005, tstops = times,
+        processors = (; snap = snapshotsaver(joinpath(dir, "snap"); times)),
+    )
+    MPI.Barrier(comm)
+    prefixes = [joinpath(dir, "snap_0001"), joinpath(dir, "snap_0002")]
+    # multi-kernel/multi-M bank + the legacy spec through the offline path
+    sfs_offline(prefixes, s; dir = joinpath(dir, "bank"), cells)
+    sfs_offline(prefixes, s; dir = joinpath(dir, "legacy"), nles = 12, filters = [2.0])
+    MPI.Barrier(comm)
+
+    # Independent serial oracle (fresh FFTW port of the recipe, per cell).
+    sser = spectral_setup(; n = N, visc, comm = MPI.COMM_SELF, procgrid = (1, 1))
+    uhser = specvelocity(sser)
+    spectral_randomfield!(uhser, sser; totalenergy = 0.3, kpeak = 2, seed = 13)
+    freqq(g, n) = g - 1 - (g ≤ (n + 1) ÷ 2 ? 0 : n)
+    sincf(x) = x == 0 ? 1.0 : sin(x) / x
+    prods = ((1, 1), (2, 2), (3, 3), (1, 2), (2, 3), (3, 1))
+    function bankoracle(uhloc, cell)
+        (; kcut, m) = sser
+        (; M, kernel, Δfac) = cell
+        Δ = Δfac * 2π / M
+        uhh = Array(uhloc)
+        F = zeros(ComplexF64, N ÷ 2 + 1, N, N, 3)
+        finepos(g) = (k = DNS.compactfreq(g, m, kcut); k ≥ 0 ? k + 1 : N + k + 1)
+        for c = 1:3, k = 1:m, j = 1:m, i = 1:(kcut+1)
+            F[i, finepos(j), finepos(k), c] = uhh[i, j, k, c]
+        end
+        v = [brfft(F[:, :, :, c], N) for c = 1:3]
+        σf = [rfft(v[i] .* v[j]) ./ N^3 for (i, j) in prods]
+        finei(g) = freqq(g, M) ≥ 0 ? freqq(g, M) + 1 : N + freqq(g, M) + 1
+        cutf(a) = [a[i, finei(j), finei(k)] for i = 1:(M÷2+1), j = 1:M, k = 1:M]
+        function filt(a)
+            b = copy(a)
+            for k = 1:M, j = 1:M, i = 1:(M÷2+1)
+                k1, k2, k3 = i - 1, freqq(j, M), freqq(k, M)
+                kk = k1^2 + k2^2 + k3^2
+                kk < 9 && continue   # low-k carve-out (protectshells = 2)
+                b[i, j, k] *=
+                    kernel == :gaussian ? exp(-Δ^2 * kk / 24) :
+                    kernel == :cutoff ? (kk ≤ (π / Δ)^2 ? 1.0 : 0.0) :
+                    kernel == :tophat ?
+                    sincf(k1 * Δ / 2) * sincf(k2 * Δ / 2) * sincf(k3 * Δ / 2) :
+                    1 / (1 + Δ^2 * kk / 24)
+            end
+            b
+        end
+        function deal(a)
+            b = copy(a)
+            for k = 1:M, j = 1:M, i = 1:(M÷2+1)
+                k1, k2, k3 = i - 1, freqq(j, M), freqq(k, M)
+                keep = k1 ≤ M ÷ 3 && abs(k2) ≤ M ÷ 3 && abs(k3) ≤ M ÷ 3 &&
+                       (k1, k2, k3) != (0, 0, 0)
+                keep || (b[i, j, k] = 0)
+            end
+            b
+        end
+        ub = [deal(filt(cutf(F[:, :, :, c]))) for c = 1:3]
+        σ1 = [filt(cutf(σ)) for σ in σf]
+        vb = [brfft(deal(u), M) for u in ub]
+        σ2 = [rfft(vb[i] .* vb[j]) ./ M^3 for (i, j) in prods]
+        τ = [deal(σ1[c] - σ2[c]) for c = 1:6]
+        tr = (τ[1] .+ τ[2] .+ τ[3]) ./ 3
+        for c = 1:3
+            τ[c] = τ[c] .- tr
+        end
+        (; ub, τ)
+    end
+
+    err(a, b) = maximum(abs, a .- b)
+    for (j, t) in enumerate(times)
+        t == 0.0 ||
+            spectral_solve!(; uh = uhser, setup = sser, tlims = (0.0, t), Δt = 0.005)
+        for cell in cells
+            ref = bankoracle(uhser, cell)
+            cdir = joinpath(dir, "bank", "filter=$(cell.kernel)", "M=$(cell.M)",
+                "delta=$(cell.Δfac)")
+            inp, out, kern, M, Δ, deta = load(
+                joinpath(cdir, "fields.jld2"),
+                "inputs", "outputs", "kernel", "M", "Δ", "delta_eta",
+            )
+            @test kern == String(cell.kernel) && M == cell.M
+            @test Δ ≈ cell.Δfac * 2π / cell.M
+            @test deta === get(cell, :Δη, nothing)
+            @test maximum(
+                err(getproperty(inp[j], c), ref.ub[ci]) for
+                (ci, c) in enumerate((:x, :y, :z))
+            ) < 1e-12
+            @test maximum(
+                err(getproperty(out[j], c), ref.τ[ci]) for
+                (ci, c) in enumerate((:xx, :yy, :zz, :xy, :yz, :zx))
+            ) < 1e-12
+        end
+        # legacy spec through the offline path: flat layout, Gaussian
+        refg = bankoracle(uhser, (; M = 12, kernel = :gaussian, Δfac = 2.0))
+        inp = load(joinpath(dir, "legacy", "delta=2.0", "fields.jld2"), "inputs")
+        @test maximum(
+            err(getproperty(inp[j], c), refg.ub[ci]) for
+            (ci, c) in enumerate((:x, :y, :z))
+        ) < 1e-12
+    end
+    mtimes = load(joinpath(dir, "bank", "dns_meta.jld2"), "times")
+    @test mtimes ≈ times atol = 1e-10
+    @test isfile(joinpath(dir, "bank", "filter=cutoff", "M=8", "delta=2.0", "les_meta.jld2"))
+
+    MPI.Barrier(comm)
+    rank == 0 && rm(dir; recursive = true)
+end
+
+@testset "spectral phase randomization n=$nranks pg=$pg" for pg in procgrids(nranks)
+    s = spectral_setup(; n = 24, comm, procgrid = pg)
+    uh = specvelocity(s)
+    spectral_randomfield!(uh, s; totalenergy = 0.4, kpeak = 3, seed = 5)
+    e0 = spectral_energy(uh, s)
+    sp0 = spectral_spectrum(uh, s)
+    uh0 = copy(uh)
+    spectral_phaserandomize!(uh, s; seed = 42)
+    # preserves modal energies and incompressibility, changes the field
+    @test spectral_energy(uh, s) ≈ e0 rtol = 1e-13
+    @test spectral_spectrum(uh, s).E ≈ sp0.E rtol = 1e-12
+    @test spectral_maxdiv(uh, s) < 1e-12
+    @test maximum(abs, Array(uh) .- Array(uh0)) > 1e-3
+    # Hermitian symmetry survives: the physical round trip is exact
+    spec_to_phys!(s.fft.v, uh, s)
+    uh2 = specvelocity(s)
+    phys_to_spec!(uh2, s.fft.v, s)
+    @test maximum(abs, Array(uh2) .- Array(uh)) < 1e-13
+    # counter-based: decomposition-invariant
+    sser = spectral_setup(; n = 24, comm = MPI.COMM_SELF, procgrid = (1, 1))
+    uhser = specvelocity(sser)
+    spectral_randomfield!(uhser, sser; totalenergy = 0.4, kpeak = 3, seed = 5)
+    spectral_phaserandomize!(uhser, sser; seed = 42)
+    (; lspec) = s
+    ref = Array(uhser)[lspec.ranges[1], lspec.ranges[2], lspec.ranges[3], :]
+    @test maximum(abs, Array(uh) .- ref) < 1e-14
+end
+
 @testset "spectral host-staged buffers n=$nranks" begin
     s = spectral_setup(; n = 12, comm, mpibuf = :host)
     uh = specvelocity(s)

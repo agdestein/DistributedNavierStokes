@@ -19,8 +19,13 @@ package extension) replaced host-staged MPI as the production path —
 2e-16 (CAMPAIGN.md S0; the UCX device path remains broken). Memory
 footprint reduced 31 → ~25 equivalents (hidden CUDA.jl real-FFT plan
 buffers freed, transpose stages share one buffer pair — §9): 1200³ runs
-on one 4×H100 node. Remaining: 2D slices (§8), `B_w = 1` batching if
-810³-on-one-GPU or 1296³ are ever needed, and phase 6.
+on one 4×H100 node. The SFS output generalized into the campaign's
+filter bank (multi-kernel/multi-M cells, Δ/η pinning, Float32 option,
+nested cell directories) with an offline driver over the raw store
+(`sfs_offline`, `examples/spectral_filterbank.jl`) and the
+phase-randomized kinematic null (`spectral_phaserandomize!`).
+Remaining: 2D slices (§8), `B_w = 1` batching if 810³-on-one-GPU or
+1296³ are ever needed, and phase 6.
 Author: Syver Døving Agdestein (with Claude).
 Companions: [DESIGN.md](DESIGN.md) (FV solver; §2 anticipated this solver and
 §4/§5/§7 specify the shared infrastructure), [CODE_DESIGN.md](CODE_DESIGN.md)

@@ -113,6 +113,18 @@ sharing the pencil/transpose layer — implemented and tested:
   `--gpus-per-task`); on clusters where CUDA.jl uses the local toolkit,
   dev the stub `examples/snellius/NCCL_jll` (see snellius/README.md).
 
+- Generalized filter bank + offline driver: a bank cell is
+  `(; M, kernel, Δfac)` — coarse grid, spectral kernel (Gaussian, sharp
+  cutoff, top-hat, Helmholtz; uniform low-k carve-out), width — with one
+  LES-cube gather at the largest M feeding every cell, widths optionally
+  pinned in Δ/η (`etacells`), and Float32 output for bulky cells.
+  Single-M Gaussian banks keep SymmetryCode's flat `delta=<Δf>/` layout;
+  other banks nest `filter=<kernel>/M=<M>/delta=<Δf>/`. `sfs_offline` +
+  `examples/spectral_filterbank.jl` re-run any bank from stored raw
+  snapshots (P1: the bank is a regenerable derivative), incl. the
+  kinematic-null variant via `spectral_phaserandomize!` (counter-based,
+  Hermitian-safe, preserves modal energies exactly). Oracle-validated on
+  all processor grids.
 - Memory: hidden field-sized buffers in CUDA.jl's real-FFT plan objects
   are freed by the CUDA package extension (which also runs the backward
   transform without the input-protecting copy), and the two transpose
