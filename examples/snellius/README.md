@@ -22,6 +22,16 @@ printf '\n[CUDACore]\nnonblocking_synchronization = false\n' >> examples/LocalPr
 julia --project=examples -e 'using Pkg; Pkg.precompile()'
 ```
 
+For the NCCL transpose transport (`mpibuf = :nccl`, the fast path — the
+UCX device path is broken here, see gotchas), dev the stub JLL that
+resolves the cluster's NCCL module (the OpenMPI/NVHPC module chain
+already loads `NCCL/2.26.6-...-CUDA-12.8.0` onto `LD_LIBRARY_PATH`; the
+real NCCL_jll refuses artifacts when CUDA.jl uses a local toolkit):
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.develop(path = "examples/snellius/NCCL_jll"); Pkg.precompile()'
+```
+
 Precompile caches are shared across the differing node architectures via
 `JULIA_CPU_TARGET` (set identically in `~/.bashrc` and the job scripts):
 
