@@ -11,12 +11,15 @@
 # fresh Julia process running examples/snellius/scaling.jl. Every rank
 # count runs inside this one 4-GPU allocation.
 #
-# Toggle: S0_MODE=dummy runs the whole pipeline (all legs: plateau row,
-# multi-rank, procgrid variant, save, sfs, device smoke, failure capture)
-# at tiny sizes in ~10 min — submit that first to catch errors cheaply:
-#   S0_MODE=dummy sbatch --time=00:20:00 examples/snellius/scaling.sh
-# Then the full matrix:
+# Toggle (positional argument — Snellius sbatch does not propagate the
+# submission environment): "dummy" runs the whole pipeline (all legs:
+# plateau row, multi-rank, procgrid variant, save, sfs, device smoke,
+# failure capture) at tiny sizes in ~10 min — submit that first to catch
+# errors cheaply:
+#   sbatch --time=00:20:00 examples/snellius/scaling.sh dummy
+# Then the full matrix (~20 min measured):
 #   sbatch examples/snellius/scaling.sh
+# Any other argument is a file of extra config rows to run instead.
 
 export DNS_MPIBUF=host
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0
@@ -29,7 +32,10 @@ export S0_SAVEDIR="/scratch-shared/$USER/s0"
 mkdir -p "$S0_SAVEDIR"
 
 # "<ranks> <n> <nsteps> [PxQ] [save] [sfs] [device]" per row.
-if [[ "${S0_MODE:-full}" == dummy ]]; then
+MODE="${1:-full}"
+if [[ -f "$MODE" ]]; then
+    mapfile -t CONFIGS < <(grep -v '^\s*\(#\|$\)' "$MODE")
+elif [[ "$MODE" == dummy ]]; then
     CONFIGS=(
         "1 48 5"
         "2 48 5"
