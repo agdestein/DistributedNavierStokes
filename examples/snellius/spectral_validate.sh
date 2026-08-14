@@ -13,7 +13,11 @@
 # Expect agreement to roundoff (~1e-14 relative); the per-rank UUID lines
 # in the 4-rank block must show four distinct GPUs.
 
-export DNS_MPIBUF=host
+# Buffer mode as a positional argument (host is the default; "nccl"
+# validates the NCCL transpose transport — Snellius sbatch does not
+# propagate the submission environment, so an argument, not an env var):
+#   sbatch examples/snellius/spectral_validate.sh nccl
+export DNS_MPIBUF=${1:-host}
 module load 2025 OpenMPI/5.0.7-NVHPC-25.3-CUDA-12.8.0
 
 # Keep in sync with ~/.bashrc so precompile caches are shared across nodes.

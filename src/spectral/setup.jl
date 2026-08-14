@@ -18,7 +18,11 @@ Keywords:
 - `kcut = n ÷ 3`: truncation wavenumber (alias-free needs `3kcut ≤ n`).
 - `procgrid = nothing`: 2D processor grid; default near-square. Slabs
   `(P, 1)` make the z→y stage communication-free.
-- `mpibuf = :auto`: as in [`setup`](@ref).
+- `mpibuf = :auto`: as in [`setup`](@ref), plus `:nccl` — transpose
+  payloads go over NCCL instead of MPI (GPU backend only; requires
+  `using CUDA, NCCL` to load the package extension, and one distinct
+  device per rank). Bypasses MPI/UCX for the bandwidth-critical path;
+  MPI still handles reductions and I/O.
 - `backend = CPU()`: KernelAbstractions backend (e.g. `CUDABackend()`).
 - `T = Float64`: element type.
 - `comm = MPI.COMM_WORLD`: MPI communicator to decompose over.
@@ -37,14 +41,23 @@ function spectral_setup(;
     n % 2 == 0 || error("n must be even")
     1 ≤ kcut || error("kcut must be at least 1")
     3kcut ≤ n || error("aliasing: 3kcut ≤ n is required (2/3 rule)")
-    mpibuf in (:auto, :device, :host) || error("mpibuf must be :auto, :device, or :host")
+    mpibuf in (:auto, :device, :host, :nccl) ||
+        error("mpibuf must be :auto, :device, :host, or :nccl")
 
     MPI.Initialized() || MPI.Init()
+    usenccl = mpibuf == :nccl
+    if usenccl
+        hasmethod(nccl_subcomm, Tuple{MPI.Comm}) || error(
+            "mpibuf = :nccl requires the NCCL extension: load CUDA.jl and NCCL.jl first",
+        )
+        backend isa CPU && error("mpibuf = :nccl requires a GPU backend")
+    end
     stagehost =
         mpibuf == :host || (mpibuf == :auto && !(backend isa CPU) && !MPI.has_cuda())
     nranks = MPI.Comm_size(comm)
     procgrid = something(procgrid, squarest(nranks))
     topo = topology(comm, procgrid, (true, true))
+    ncclcomms = usenccl ? map(nccl_subcomm, topo.subcomms) : (nothing, nothing)
 
     m = 2kcut + 1
     nb = 3
@@ -70,12 +83,12 @@ function spectral_setup(;
 
     xz = plan_spectral_transpose(
         lxt, lzf, topo, backend, T;
-        nb, srcdim3 = size(âx, 3), dstdim3 = n, stagehost,
+        nb, srcdim3 = size(âx, 3), dstdim3 = n, stagehost, ncclcomms,
     )
     zy = plan_spectral_transpose(
         lzt, lyt, topo, backend, T;
         nb, srcdim3 = n, dstdim3 = lyt.ldims[3],
-        splitsrc = (kcut, m, n), stagehost,
+        splitsrc = (kcut, m, n), stagehost, ncclcomms,
     )
 
     # Physical wavenumbers of the state layout's local ranges.
@@ -100,6 +113,7 @@ function spectral_setup(;
         backend,
         topo,
         stagehost,
+        mpimode = usenccl ? :nccl : stagehost ? :host : :device,
         lphys,
         lspec,
         kx,

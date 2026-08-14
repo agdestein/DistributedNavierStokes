@@ -4,13 +4,11 @@ DistributedNavierStokes = "f64655ff-a0fc-45af-b814-374c85e154ca"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 MPIPreferences = "3da0fdf6-3ccc-4f1b-acd9-58baa6c99267"
+NCCL = "3fe64909-d7a1-4096-9b7d-7a0f12cf0f6b"
 
 [sources]
 DistributedNavierStokes = {path = ".."}
 
-# So LocalPreferences.toml can address indirect dependencies: CUDACore
-# (nonblocking_synchronization = false, needed on Snellius MIG) and
-# CUDA_Runtime_jll (written by CUDA.set_runtime_version!).
 [extras]
 CUDACore = "bd0ed864-bdfe-4181-a5ed-ce625a5fdea2"
 CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"

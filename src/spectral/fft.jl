@@ -63,6 +63,7 @@ function plan_spectral_transpose(
     splitsrc = nothing,
     splitdst = nothing,
     stagehost = false,
+    ncclcomms = (nothing, nothing),
 )
     a = swapped_axis(src, dst)
     (; procgrid, coords) = topo
@@ -83,6 +84,7 @@ function plan_spectral_transpose(
     single = length(peers) == 1
     (;
         subcomm = topo.subcomms[a],
+        nccl = single ? nothing : ncclcomms[a],
         sendboxes = batch(split(sb, splitsrc), srcdim3),
         recvboxes = batch(split(rb, splitdst), dstdim3),
         sendcounts,
@@ -105,7 +107,15 @@ function spectral_transpose!(dst, src, plan, backend)
     pack!(plan.sendbuf, src, plan.sendboxes, backend)
     KernelAbstractions.synchronize(backend)
     if length(plan.sendcounts) > 1
-        if plan.hostsendbuf === nothing
+        if plan.nccl !== nothing
+            nccl_alltoallv!(
+                plan.nccl,
+                plan.sendbuf,
+                plan.sendcounts,
+                plan.recvbuf,
+                plan.recvcounts,
+            )
+        elseif plan.hostsendbuf === nothing
             MPI.Alltoallv!(
                 MPI.VBuffer(plan.sendbuf, plan.sendcounts),
                 MPI.VBuffer(plan.recvbuf, plan.recvcounts),

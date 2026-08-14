@@ -6,6 +6,7 @@
 # check on real multi-device hardware (spectral_validate.sh).
 
 using CUDA
+using NCCL
 using KernelAbstractions
 using MPI
 using DistributedNavierStokes
@@ -35,11 +36,13 @@ s = spectral_setup(;
     l = 2π,
     visc = 1e-3,
     backend,
-    mpibuf = get(ENV, "DNS_MPIBUF", "auto") == "host" ? :host : :auto,
+    mpibuf = let m = get(ENV, "DNS_MPIBUF", "auto")
+        m == "host" ? :host : m == "nccl" ? :nccl : :auto
+    end,
 )
 rank == 0 && println(
     "n = $(s.n), kcut = $(s.kcut), procgrid = $(s.topo.procgrid), " *
-    "MPI buffers = $(s.stagehost ? "host-staged" : "device")",
+    "MPI buffers = $(s.mpimode)",
 )
 
 uh = specvelocity(s)

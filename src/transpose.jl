@@ -3,6 +3,27 @@
 # the segment rank r sends to peer c is the intersection of r's source box
 # with c's destination box — three range intersections, nothing more.
 
+# NCCL transport hooks, implemented by the DistributedNavierStokesNCCLExt
+# package extension (loaded automatically when both CUDA.jl and NCCL.jl
+# are loaded). NCCL bypasses the MPI/UCX stack entirely for the transpose
+# payload — the fix for clusters whose UCX cannot handle CUDA.jl device
+# buffers (examples/snellius/README.md); MPI still handles setup,
+# reductions, and I/O.
+
+"""
+NCCL communicator congruent to the MPI communicator `comm` (`nothing` for a
+single rank). Collective over `comm`; requires one distinct CUDA device
+per rank. Extension method — needs `using CUDA, NCCL`.
+"""
+function nccl_subcomm end
+
+"""
+Alltoallv over an [`nccl_subcomm`](@ref) communicator: grouped NCCL
+send/recv per peer (self-segments are device copies), enqueued on the
+current CUDA stream. Extension method — needs `using CUDA, NCCL`.
+"""
+function nccl_alltoallv! end
+
 "Processor-grid axis over which data moves when going from `src` to `dst`."
 function swapped_axis(src, dst)
     d = findfirst(==(0), src.axes) # src's local dimension
@@ -54,6 +75,7 @@ end
 "The plan for the opposite direction, sharing the forward plan's buffers."
 reverse_plan(p) = (;
     p.subcomm,
+    nccl = get(p, :nccl, nothing),
     sendboxes = p.recvboxes,
     recvboxes = p.sendboxes,
     sendcounts = p.recvcounts,

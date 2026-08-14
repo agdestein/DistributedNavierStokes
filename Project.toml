@@ -13,8 +13,17 @@ MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+NCCL = "3fe64909-d7a1-4096-9b7d-7a0f12cf0f6b"
+
+[extensions]
+DistributedNavierStokesNCCLExt = ["CUDA", "NCCL"]
+
 [compat]
 AbstractFFTs = "1"
+CUDA = "5, 6"
+NCCL = "0.1"
 FFTW = "1"
 JLD2 = "0.4, 0.5, 0.6"
 KernelAbstractions = "0.9"

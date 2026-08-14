@@ -1,6 +1,6 @@
 # S0 scaling benchmark — one configuration per process (CAMPAIGN.md).
 #
-#   julia --project=examples examples/snellius/scaling.jl <n> <nsteps> [PxQ|auto] [save] [sfs] [device]
+#   julia --project=examples examples/snellius/scaling.jl <n> <nsteps> [PxQ|auto] [save] [sfs] [device] [nccl]
 #
 # Runs a synthetic forced-HIT configuration at transform grid n³, times
 # `nsteps` full solver steps individually after two throw-away warm-up
@@ -12,6 +12,7 @@
 # per invocation to $S0_RESULTS (default "s0-results.toml").
 
 using CUDA
+using NCCL
 using KernelAbstractions
 using MPI
 using DistributedNavierStokes
@@ -25,7 +26,7 @@ rank = MPI.Comm_rank(comm)
 n = parse(Int, ARGS[1])
 nsteps = parse(Int, ARGS[2])
 procgrid = nothing
-dosave, dosfs, dodevice = false, false, false
+dosave, dosfs, dodevice, donccl = false, false, false, false
 for a in ARGS[3:end]
     if a == "save"
         global dosave = true
@@ -33,11 +34,15 @@ for a in ARGS[3:end]
         global dosfs = true
     elseif a == "device"
         global dodevice = true
+    elseif a == "nccl"
+        global donccl = true
     elseif a != "auto"
         global procgrid = Tuple(parse.(Int, split(a, "x")))
     end
 end
-mpibuf = dodevice ? :device : get(ENV, "DNS_MPIBUF", "auto") == "host" ? :host : :auto
+mpibuf =
+    donccl ? :nccl :
+    dodevice ? :device : get(ENV, "DNS_MPIBUF", "auto") == "host" ? :host : :auto
 
 backend = if CUDA.functional()
     nodecomm = MPI.Comm_split_type(comm, MPI.COMM_TYPE_SHARED, rank)
@@ -54,7 +59,7 @@ s = spectral_setup(; n, l = 2π, visc = 1e-3, backend, mpibuf, procgrid)
 cart = topo.cart
 rank == 0 && println(
     "n = $n, kcut = $(s.kcut), procgrid = $(topo.procgrid), " *
-    "MPI buffers = $(s.stagehost ? "host-staged" : "device")",
+    "MPI buffers = $(s.mpimode)",
 )
 
 # Round-one-like state: k^-5/3 spectrum, E₀ = 0.2, shell-clamp forcing.
@@ -142,7 +147,7 @@ if rank == 0
         println(io, "n = $n")
         println(io, "ranks = $(MPI.Comm_size(comm))")
         println(io, "procgrid = [$(join(topo.procgrid, ", "))]")
-        println(io, "mpibuf = \"$(s.stagehost ? "host" : "device")\"")
+        println(io, "mpibuf = \"$(s.mpimode)\"")
         println(io, "gpu = $(CUDA.functional())")
         println(io, "nsteps = $nsteps")
         println(io, "step_min = $smin")
