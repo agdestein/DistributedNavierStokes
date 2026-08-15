@@ -72,7 +72,7 @@ state = spectral_solve!(;
     uh,
     setup = s,
     tlims = (t0, tend),
-    cfl = 0.4,
+    cfl = 0.85,
     forcing,
     nstart,
     processors = (;

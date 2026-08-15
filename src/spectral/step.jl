@@ -45,22 +45,34 @@ const wray3 = (;
 end
 
 """
+Rank-local maximum of the pointwise component sum `|v₁|+|v₂|+|v₃|` of the
+physical velocity `v` — the velocity scale of the convective stability
+bound. The sum is per-point arithmetic (identical for every decomposition)
+and `max` reorders exactly in floating point, so the caller's global
+`Allreduce(max)` gives a bit-identical bound for every processor grid.
+"""
+vsummax(v) = mapreduce(
+    (a, b, c) -> abs(a) + abs(b) + abs(c),
+    max,
+    view(v, :, :, :, 1),
+    view(v, :, :, :, 2),
+    view(v, :, :, :, 3),
+)
+
+"""
 One IF-RK3 step of size `Δt`. `cache = (; ustart, du)` holds the two
-state-shaped registers. Returns the rank-local per-component maxima of
-`v_c²` from the first stage; the caller must reduce each component over
-ranks *before* combining them into the CFL bound `√(Σ_c max v_c²) ≥
-max|v|` — reducing a locally combined bound would make the estimate (and
-the adaptive time step) depend on the processor grid.
+state-shaped registers. Returns the rank-local [`vsummax`](@ref) of the
+first-stage physical velocity; the caller reduces it with a global `max`
+for the adaptive time-step bound.
 """
 function spectral_step!(uh, s, Δt, cache)
     (; backend, T) = s
     (; ustart, du) = cache
     copyto!(ustart, uh)
-    vmax = ntuple(_ -> zero(T), 3)
+    vmax = zero(T)
     for i = 1:3
         spectral_rhs!(du, uh, s)
-        i == 1 &&
-            (vmax = ntuple(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 3))
+        i == 1 && (vmax = vsummax(s.fft.v))
         ifstage_kernel!(backend)(
             uh,
             ustart,
@@ -80,14 +92,21 @@ function spectral_step!(uh, s, Δt, cache)
 end
 
 """
-    spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.3,
+    spectral_solve!(; uh, setup, tlims, Δt = nothing, cfl = 0.85,
                     forcing = nothing, tstops = (), nstart = 0,
                     processors = (;))
 
 Integrate the spectral state `uh` from `tlims[1]` to `tlims[2]`. The initial
-field is projected. `Δt = nothing` means CFL-adaptive stepping (convective
-limit only — viscosity is exact); the velocity maximum is lagged by one
-step. `forcing` is a mutating hook `forcing(uh, setup)` applied after every
+field is projected. `Δt = nothing` means adaptive stepping at the fraction
+`cfl` of the linear (frozen-velocity) stability boundary of the convective
+term — viscosity is exact, so there is no viscous limit:
+
+    Δt = cfl · √3 / (kmax · max_x Σ_c |v_c(x)|)
+
+with `kmax = 2π·kcut/l` the largest retained wavenumber and `√3` the
+imaginary-axis extent of the RK3 stability region. Keep `cfl < 1`: the
+velocity maximum is lagged by one step, forcing is injected after it is
+measured, and the frozen-velocity analysis idealizes the nonlinear term. `forcing` is a mutating hook `forcing(uh, setup)` applied after every
 step (e.g. [`shellforcing`](@ref)). Steps are shortened to land exactly on
 each time in `tstops` (e.g. snapshot times, see [`snapshotsaver`](@ref)).
 Each processor is called as `proc(state, setup)` after every step (and once
@@ -101,7 +120,7 @@ function spectral_solve!(;
     setup,
     tlims,
     Δt = nothing,
-    cfl = 0.3,
+    cfl = 0.85,
     forcing = nothing,
     tstops = (),
     nstart = 0,
@@ -111,20 +130,16 @@ function spectral_solve!(;
     (; T, topo) = s
     cache = (; ustart = specvelocity(s), du = specvelocity(s))
     spectral_project!(uh, s)
-    h = s.l / s.n
+    kmax = T(2π) * s.kcut / s.l
     ϵ = eps(T)
-    # CFL bound √(Σ_c max v_c²): per-component maxima are reduced globally
-    # before combining, so the adaptive Δt (hence the whole trajectory) is
-    # identical for every rank count and processor grid.
-    vbuf = Vector{T}(undef, 3)
-    globalvmax(vloc) = begin
-        vbuf .= vloc
-        MPI.Allreduce!(vbuf, max, topo.cart)
-        sqrt(sum(vbuf))
-    end
+    # Stability-bound velocity scale max_x Σ_c |v_c|: a pointwise quantity
+    # under a global max (both exact under decomposition), so the adaptive
+    # Δt (hence the whole trajectory) is identical for every rank count
+    # and processor grid.
+    globalvmax(vloc) = MPI.Allreduce(vloc, max, topo.cart)
     vmax = if isnothing(Δt)
         spec_to_phys!(s.fft.v, uh, s)
-        globalvmax(ntuple(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 3))
+        globalvmax(vsummax(s.fft.v))
     else
         zero(T)
     end
@@ -142,7 +157,7 @@ function spectral_solve!(;
             istop += 1
         end
         tnext = istop ≤ length(stops) ? stops[istop] : tend
-        Δtn = min(something(Δt, T(cfl) * h / (vmax + ϵ)), tnext - t)
+        Δtn = min(something(Δt, T(cfl) * T(√3) / (kmax * (vmax + ϵ))), tnext - t)
         vloc = spectral_step!(uh, s, T(Δtn), cache)
         isnothing(forcing) || forcing(uh, s)
         isnothing(Δt) && (vmax = globalvmax(vloc))

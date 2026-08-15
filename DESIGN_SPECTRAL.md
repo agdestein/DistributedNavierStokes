@@ -190,9 +190,10 @@ Implementation notes:
   pointwise in k: the SymmetryCode kernels port mechanically, with
   wavenumbers derived from the descriptor's global ranges instead of
   `Grid.n`.
-- CFL: `max |v|` is fused into the product stage (the physical velocities
-  are in hand every stage anyway) + `Allreduce(max)` every `n_cfl` steps.
-  With the integrating factor there is no viscous limit (§6).
+- CFL: the stability-bound velocity scale `max_x (|v₁|+|v₂|+|v₃|)` is one
+  fused reduction over the stage-1 physical velocities (in hand anyway) +
+  a scalar `Allreduce(max)` per step. With the integrating factor there is
+  no viscous limit (§6).
 
 ## 6. Time integration
 
@@ -214,6 +215,20 @@ coarse-grid runs, late decay, and deleting the viscous branch from the
 timestep proposal. Since it costs nothing, it is simply the default; the
 TGV order-verification test (§10) confirms the stage-boundary factor
 placement preserves 3rd order in the convective terms.
+
+**Adaptive Δt from the linear stability boundary.** The dealiased
+convective eigenvalues are imaginary; the RK3 stability region reaches √3
+on the imaginary axis, and the sharpest x-independent frozen-velocity
+bound on the spectral radius is `kmax · max_x Σ_c |v_c(x)|` with
+`kmax = 2π·kcut/l` the largest retained wavenumber. The proposal is
+therefore `Δt = cfl · √3 / (kmax · max_x Σ_c |v_c|)`, with `cfl` the
+fraction of that provable boundary (default 0.85 — the margin covers the
+one-step lag of the velocity maximum, forcing injected after it is
+measured, and the frozen-velocity idealization of the nonlinear term).
+The velocity scale is a pointwise quantity under a global `max` — both
+exact under decomposition — so the adaptive trajectory stays bit-identical
+across rank counts and processor grids; it costs one fused reduction over
+the stage-1 physical velocities plus a scalar `Allreduce`.
 
 Forcing: low-wavenumber shell energy clamp, matching SymmetryCode
 (`energy_shells` / `maintain_shell_energy!`): per-rank shell masks

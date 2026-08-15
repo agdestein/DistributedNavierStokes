@@ -58,8 +58,9 @@ sharing the pencil/transpose layer — implemented and tested:
   split at the pos/neg frequency boundary), and the three field components
   travel batched in one `Alltoallv`.
 - Wray low-storage RK3 with integrating-factor viscosity (exact diffusion,
-  no viscous CFL limit); convection in divergence form, dealiased by
-  construction. Third-order self-convergence verified; single-rank
+  no viscous CFL limit); adaptive Δt at a chosen fraction (`cfl`) of the
+  linear convective stability boundary `√3 / (kmax · max_x Σ|v_c|)`;
+  convection in divergence form, dealiased by construction. Third-order self-convergence verified; single-rank
   trajectories match the SymmetryCode single-GPU solver.
 - Prescribed-spectrum random ICs from counter-based (splitmix64) physical
   noise — Hermitian symmetry automatic, fields identical for every rank
@@ -121,8 +122,8 @@ sharing the pencil/transpose layer — implemented and tested:
 - Snellius multi-device validation: 4 H100s vs 1 H100 produce the same
   final field to machine precision (2e-16 relative, host-staged buffers;
   `examples/snellius/spectral_validate.sh`). The run caught a
-  decomposition-dependent adaptive-CFL bound — per-component velocity
-  maxima are now reduced globally before combining, so CFL-adaptive
+  decomposition-dependent adaptive-CFL bound — the bound's velocity scale
+  is now a pointwise quantity under a global `max`, so CFL-adaptive
   trajectories (not just fixed-`Δt` ones) are decomposition invariant.
 
 - NCCL transpose transport (`spectral_setup(; mpibuf = :nccl)`, package

@@ -61,7 +61,7 @@ walltime = @elapsed state = spectral_solve!(;
     uh,
     setup = s,
     tlims = (0.0, 0.05),
-    cfl = 0.4,
+    cfl = 0.85,
     forcing,
     processors = (; log),
 )

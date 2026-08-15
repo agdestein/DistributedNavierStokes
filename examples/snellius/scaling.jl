@@ -71,18 +71,13 @@ spectral_randomfield!(
 )
 forcing = shellforcing(uh, s; shells = 1:2)
 cache = (; ustart = specvelocity(s), du = specvelocity(s))
-vbuf = Vector{T}(undef, 3)
-globalvmax(vloc) = begin
-    vbuf .= vloc
-    MPI.Allreduce!(vbuf, max, cart)
-    sqrt(sum(vbuf))
-end
+globalvmax(vloc) = MPI.Allreduce(vloc, max, cart)
 
 # CFL-proposed dt at this field (recorded for steps-per-time-unit
 # pricing), then held fixed so every timed step does identical work.
 spec_to_phys!(s.fft.v, uh, s)
-vmax = globalvmax(ntuple(c -> maximum(abs2, view(s.fft.v, :, :, :, c)), 3))
-dt = T(0.4) * s.l / s.n / vmax
+vmax = globalvmax(DNS.vsummax(s.fft.v))
+dt = T(0.85) * T(√3) / (T(2π) * s.kcut / s.l) / vmax
 
 # A full production step, as spectral_solve! executes it.
 function prodstep!()

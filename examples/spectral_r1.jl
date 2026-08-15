@@ -46,7 +46,7 @@ t_warm = parse(Float64, get(ENV, "DNS_TWARM", dummy ? "2.0" : "25.0"))
 nlaw = dummy ? 2 : 20     # law samples after the first: window = nlaw·t_int/2
 ndense = dummy ? 5 : 40   # test-style samples over the first t_int
 totalenergy = 0.2
-cfl = 0.35
+cfl = 0.85  # fraction of the RK3 stability boundary (see spectral_solve!)
 outdir = get(ENV, "DNS_OUTDIR", "output-r1")
 snapdir = joinpath(outdir, "snapshots")
 rank == 0 && (mkpath(outdir); mkpath(snapdir))

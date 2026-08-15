@@ -132,7 +132,7 @@ end
         spectral_randomfield!(uh, s; totalenergy = 0.4, kpeak = 2, seed = 7)
         f = shellforcing(uh, s; shells = 1:2)
         # cfl (not Δt): also pins down the adaptive time step, whose CFL
-        # bound must reduce per-component maxima globally to be
+        # bound must be a pointwise quantity under a global max to be
         # decomposition-invariant (caught on Snellius with 4 H100s vs 1).
         state = spectral_solve!(; uh, setup = s, tlims = (0.0, 0.1), cfl = 0.4, forcing = f)
         spec_to_phys!(s.fft.v, uh, s)
