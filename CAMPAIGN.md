@@ -173,6 +173,18 @@ Snapshot save at 1200³: 11.5 GB in 17 s (scratch-shared bandwidth
 varies 0.5-1.3 GB/s across jobs; still negligible against a law-mode
 cadence).
 
+**Production re-anchor (2026-08-16, from the completed R1 run):** all
+SBU/tu prices above used the pre-a011e41 CFL-0.35 Δt heuristic. The
+RK3-stability-boundary selector (a011e41, landed mid-R1 at the chunk-3
+restart) takes **1.81× larger steps** on the same trajectory (mean Δt
+6.84e-4 → 1.236e-3 at 972³, measured across the restart in R1's
+stats.csv). Measured production price at 972³ on 2 GPUs: **0.61
+GPU·h ≈ 118 SBU per time unit** (3.26 tu/h wall, incl. per-chunk
+restart overhead) — matching the S0 step time × new Δt to ~1%. Scaled
+S0 prices under the new selector: 810³/2 ≈ 50 SBU/tu, 810³/4 ≈ 44,
+1080³/4 ≈ 165, 1200³/4 ≈ 350. These (and R1's actuals) are the numbers
+now carried in data-campaign.md §7 / snellius-application.md.
+
 **Findings:**
 
 1. **Transforms are ~95% of a step, and staging is ~88% of a
@@ -321,13 +333,29 @@ transformed); η recorded as `l_kol` in `statistics_dns`.
   over the first t_int) persisted to schedule.toml, then production with
   raw-f64 snapshots (P1 — the bank runs offline afterwards via
   `spectral_filterbank.jl`). `sbatch spectral_r1.sh dummy` runs the
-  whole pipeline tiny — do that before every real submission. Estimated
-  ≈ 11k SBU / ~30 h wall at 972³ (3 auto-resubmitting 12 h chunks).
+  whole pipeline tiny — do that before every real submission.
   Building it exposed and fixed a production-blocking restart bug:
   `snapshotsaver` now takes `tstart` (the checkpoint's time) so restarts
   skip already-saved entries instead of rewriting every earlier snapshot
   index with the restart-time field. Verified locally end-to-end at 256³
   incl. a mid-production stop/resume: earlier snapshots byte-untouched,
   schedule reused, stats.csv single-headered, exact completion.
-  **Launch waits on the budget decision (§7 sequencing: R1–R3 after the
-  extension is confirmed).**
+
+  **R1 ran to completion 2026-08-14→16** (jobs 25639420 → 25685620 →
+  25702576 → 25714107, `sbatch spectral_r1.sh 972
+  /projects/prjs1757/dns2/r1`): 4 auto-resubmitted chunks, 45.0 h wall
+  on 2 H100s = **17.3k SBU** (vs the 11k estimate: t_int measured 8.74
+  against ~7 assumed, and the first 23.5 h ran the old CFL-0.35
+  selector — the a011e41 RK3-boundary selector landed at the chunk-3
+  restart and took 1.81× larger steps; the same run costs ≈ 13k / 34 h
+  today). Warm-up to t = 25 (2.9 t_int), schedule fixed at t_int =
+  8.7379, production to t = 112.379: **59 raw f64 snapshots, 0.40 TB
+  incl. checkpoints, on disk**. Physics: Re_λ 389–432, k_max·η
+  1.29–1.38 over the sampled window (the resolution target ≥ 1.3, met
+  in the mean at 1.33, grazed at dissipation peaks), E drifting 0.200 →
+  0.221 over the 10-t_int window (shell clamp pins shells 1–2 only) —
+  the drift record stats.csv was built for. Every restart invariant
+  held in production (snapshots untouched across chunk boundaries,
+  single-header stats, schedule reused, exact landing on the last
+  scheduled time). The filter bank / twin analysis on these snapshots
+  is post-processing via `spectral_filterbank.jl`.
