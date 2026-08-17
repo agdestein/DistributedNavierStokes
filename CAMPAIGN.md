@@ -359,3 +359,21 @@ transformed); η recorded as `l_kol` in `statistics_dns`.
   single-header stats, schedule reused, exact landing on the last
   scheduled time). The filter bank / twin analysis on these snapshots
   is post-processing via `spectral_filterbank.jl`.
+
+  **R1 filter bank generated 2026-08-17** (jobs 25747606 + 25747607
+  after dummy validation 25746483; driver env-configured and
+  `examples/snellius/spectral_filterbank.sh` added in 08a9ec8, verified
+  end-to-end locally first). Two passes, both 2 H100s, ≈ 250 SBU total,
+  η pinned to the all-sidecar mean 0.0027362 so matched-Δ/η columns
+  match exactly across M:
+  - `full` → `/projects/prjs1757/dns2/r1/bank` (93 GB, 18 min): all 59
+    snapshots × 11 cells — legacy Gaussian Δ/h {2.5, 3.5, 5} at M = 128
+    (round one's test columns, the resolution-check comparison) plus
+    Δ/η {40, 60} × {gaussian, cutoff, tophat, helmholtz} at M = 128
+    (Δfac 2.23, 3.344).
+  - `m256` → `/projects/prjs1757/dns2/r1/bank256` (130 GB, 20 min): the
+    19 decorrelated law-mode snapshots × 12 cells — Δ/η {18, 27, 40} ×
+    the four kernels at M = 256 (Δfac 2.007, 3.01, 4.459), Float32.
+  The window rule dropped every M = 64 combo at this Re (widest column
+  Δ/η = 60 is Δ/h = 1.67 there), as the campaign design predicts for
+  the high-Re row.
