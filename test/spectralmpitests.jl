@@ -572,10 +572,12 @@ end
     # stationarity record: initial row + one per step, statistics exact
     lines = readlines(joinpath(dir, "stats.csv"))
     @test startswith(lines[1], "t,step,e,uavg,diss,")
+    @test endswith(lines[1], ",walltime")
     @test length(lines) == 6   # header + n = 0..4
     row = parse.(Float64, split(lines[end], ","))
     @test row[1] ≈ 0.02 atol = 1e-12
     @test row[3] ≈ spectral_energy(uh, s) rtol = 1e-12
+    @test row[end] > 1.7e9   # walltime: rank 0's epoch seconds at the write
     # sidecar carries the measured K41 numbers next to user meta
     md = DNS.TOML.parsefile(joinpath(dir, "snap_0001.toml"))["meta"]
     st = spectral_stats(uh, s)

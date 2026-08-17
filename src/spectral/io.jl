@@ -233,10 +233,14 @@ end
 
 Processor appending one CSV row of the K41 statistics
 ([`spectral_stats`](@ref)) every `nupdate` steps: `t`, `step`, then every
-statistic (ε, L_int, t_int, η, …) — the stationarity drift record the run
-archive keeps next to the data. Rank 0 writes, append mode (a restarted
-run continues the series), header only when the file is new, flushed per
-row. Collective (statistics are reductions).
+statistic (ε, L_int, t_int, η, …), then `walltime` — the stationarity
+drift record the run archive keeps next to the data. `walltime` is rank
+0's Unix epoch time at the write, so diffing any two rows gives the
+wall-clock cost of that stretch of simulation; it stays monotone across
+checkpoint restarts (chunk boundaries show up as gaps). It is the one
+column that is not decomposition-invariant. Rank 0 writes, append mode
+(a restarted run continues the series), header only when the file is
+new, flushed per row. Collective (statistics are reductions).
 """
 function statswriter(; file, nupdate = 10)
     io = Ref{Union{IOStream,Nothing}}(nothing)
@@ -248,9 +252,9 @@ function statswriter(; file, nupdate = 10)
                 mkpath(dirname(abspath(file)))
                 fresh = !isfile(file) || filesize(file) == 0
                 io[] = open(file, "a")
-                fresh && println(io[], join(("t", "step", string.(keys(st))...), ","))
+                fresh && println(io[], join(("t", "step", string.(keys(st))..., "walltime"), ","))
             end
-            println(io[], join((state.t, state.n, values(st)...), ","))
+            println(io[], join((state.t, state.n, values(st)..., time()), ","))
             flush(io[])
         end
         nothing

@@ -96,7 +96,9 @@ sharing the pencil/transpose layer — implemented and tested:
   training/analysis pipeline applies unchanged. Validated against an
   independent serial FFTW oracle to 1e-12 on all processor grids.
 - Run-record hygiene: `statswriter` appends a per-interval CSV of the
-  K41 statistics (restart-continuable — the stationarity drift record),
+  K41 statistics plus a `walltime` epoch column (restart-continuable —
+  the stationarity drift record, with per-step wall cost recoverable by
+  diffing rows),
   and snapshot sidecars carry `eta`/`t_int`/`e`/`diss` measured at save
   time. `spectral_from_rfft!` + `examples/symmetrycode_import.jl` import
   a SymmetryCode full-rfft state into a snapshot, so twin validations

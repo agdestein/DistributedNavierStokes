@@ -276,6 +276,10 @@ test filter) are diagonal in k and distribute trivially.
   coarser cadence. Local spectral sums + `Allreduce` (the RFFT
   double-counting logic ports unchanged; the FV `spectrumstats` shows the
   pattern). Rank-0 appended time series, `dnsmetafile`-compatible.
+  `statswriter` rows end with a `walltime` column (rank 0's Unix epoch at
+  the write): diffing rows recovers wall cost per simulated time unit for
+  SBU forecasting, and the value is monotone across restart chunks. It is
+  the one deliberately non-decomposition-invariant output column.
 - 2D slices: gather the z = l/2 plane (FP32, `slicefile` schema) from the
   ranks owning it in the physical x-pencil stage.
 - Hooks are FV-style rank-aware processors (CODE_DESIGN.md §12).
