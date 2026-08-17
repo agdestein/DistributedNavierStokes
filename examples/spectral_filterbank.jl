@@ -2,13 +2,16 @@
 # bank is a regenerable derivative of the raw store). Grid parameters come
 # from the first snapshot's TOML sidecar; the transform grid is the leanest
 # alias-free one (n = 3·kcut, rounded even), independent of the grid the
-# run used. Edit the BANK block, then:
+# run used. Configure the bank via the DNS_* environment (see the BANK
+# block), then:
 #
 #   srun/mpiexec -n 4 julia --project=examples examples/spectral_filterbank.jl out/snap_*.bin
 #
 # (prefixes with or without .bin/.toml; processed in sorted order).
-# Environment: DNS_OUTDIR (default "bank"), DNS_MPIBUF (host|nccl|auto),
-# DNS_PHASESEED (set an integer for the kinematic-null pass).
+# Environment: DNS_MS, DNS_DETA, DNS_KERNELS, DNS_LEGACY, DNS_ETA (the
+# bank — defaults in the BANK block), DNS_OUTDIR (default "bank"),
+# DNS_MPIBUF (host|nccl|auto), DNS_PHASESEED (set an integer for the
+# kinematic-null pass).
 
 using CUDA
 using NCCL
@@ -46,20 +49,44 @@ rank == 0 && println(
     "visc = $visc, procgrid = $(s.topo.procgrid), MPI buffers = $(s.mpimode)",
 )
 
-# ---- BANK (edit me) ------------------------------------------------------
-# Explicit cells (Δ = Δfac·l/M), or pin widths in Δ/η via etacells once η
-# is known (e.g. l_kol from a pilot's statistics_dns):
-#   cells = etacells(; deta = [18, 27, 40], eta = 0.012, l,
-#                    Ms = [64, 128, 256], kernels = (:gaussian, :cutoff, :tophat))
+# ---- BANK (env-configured; ProbabilisticClosure data-campaign.md §3) -----
+# Δ/η-pinned columns (DNS_DETA × DNS_KERNELS; `etacells`'s window rule
+# picks which of DNS_MS carries each width), plus optional legacy Gaussian
+# Δ/h columns at M = min(128, 2·kcut) (DNS_LEGACY — SymmetryCode's
+# round-one cells). η defaults to the sidecar mean over the snapshots
+# passed; set DNS_ETA to pin it (e.g. one value shared by an M ≤ 128 pass
+# and an M = 256 subset pass, so matched-Δ/η columns match exactly).
+splitlist(str) = [String(x) for x in split(str, ",") if !isempty(x)]
+Ms = filter(M -> M ÷ 2 ≤ kcut, parse.(Int, splitlist(get(ENV, "DNS_MS", "64,128"))))
+deta = parse.(Float64, splitlist(get(ENV, "DNS_DETA", "18,27,40,60")))
+kernels = Symbol.(splitlist(get(ENV, "DNS_KERNELS", "gaussian,cutoff,tophat,helmholtz")))
+legacy = parse.(Float64, splitlist(get(ENV, "DNS_LEGACY", "")))
+etas = [Float64(DNS.TOML.parsefile(p * ".toml")["meta"]["eta"]) for p in prefixes]
+eta = something(tryparse(Float64, get(ENV, "DNS_ETA", "")), sum(etas) / length(etas))
 cells = [
-    (; M, kernel, Δfac) for M in (min(128, 2kcut),) for
-    kernel in (:gaussian, :cutoff, :tophat) for Δfac in (2.0, 3.0, 4.0)
+    [(; M = min(128, 2kcut), kernel = :gaussian, Δfac) for Δfac in legacy]
+    isempty(deta) || isempty(Ms) ? [] : etacells(; deta, eta, l, Ms, kernels)
 ]
+isempty(cells) && error("empty bank (η = $eta): check DNS_MS/DNS_DETA/DNS_LEGACY")
 outtype = M -> M ≥ 256 ? Float32 : Float64
 phaseseed = let p = get(ENV, "DNS_PHASESEED", "")
     isempty(p) ? nothing : parse(Int, p)
 end
 # --------------------------------------------------------------------------
+
+if rank == 0
+    println(
+        "η = $eta (sidecar mean $(sum(etas) / length(etas)), " *
+        "range $(minimum(etas))–$(maximum(etas)))",
+    )
+    for c in cells
+        Δη = get(c, :Δη, nothing)
+        println(
+            "  cell: $(c.kernel) M = $(c.M) Δfac = $(c.Δfac)" *
+            (Δη === nothing ? " (legacy)" : " (Δ/η = $Δη)"),
+        )
+    end
+end
 
 outdir = get(ENV, "DNS_OUTDIR", "bank")
 walltime = @elapsed sfs_offline(prefixes, s; dir = outdir, cells, outtype, phaseseed)
