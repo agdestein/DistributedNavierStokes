@@ -1,25 +1,29 @@
-# R1 — the ν = 1e-4 resolution-check DNS (data-campaign.md §2): round-one
-# physics (l = 2π, E₀ = 0.2, k^(-5/3) init, shell clamp on shells 1-2) on a
-# grid that lifts k_max·η from 1.09 to ≥ 1.3. Three phases in one driver,
-# checkpoint/restartable at any point (submit via snellius/spectral_r1.sh):
+# The campaign DNS driver (data-campaign.md §2 in ProbabilisticClosure):
+# round-one physics (l = 2π, E₀ = 0.2, k^(-5/3) init, shell clamp on
+# shells 1-2) at any (n, ν, seed, window) — one realization per run of the
+# R2 ladder, R3, or R1 (whose defaults these are; this file generalizes the
+# retired spectral_r1.jl). Submit via snellius/spectral_campaign.sh, which
+# owns the run table. Three phases, checkpoint/restartable at any point:
 #
 # 1. Warm-up to t = DNS_TWARM (default 25 ≈ 3 nominal t_int — the
 #    campaign's hygiene fix over round one's 0.65 t_int), stationarity
 #    drift recorded in stats.csv throughout.
 # 2. Schedule: at warm-up end the *measured* t_int fixes the sampling —
-#    law mode (snapshots every t_int/2 over 10 t_int) plus a test-style
-#    dense window (40 snapshots over the first t_int) — written once to
-#    schedule.toml so every restart replays identical times.
+#    law mode (snapshots every t_int/2, DNS_NLAW of them: window =
+#    nlaw·t_int/2) plus an optional test-style/pairing dense window
+#    (DNS_NDENSE snapshots over the first t_int; 0 disables) — written
+#    once to schedule.toml so every restart replays identical times.
 # 3. Production: raw truncated-f64 snapshots at the scheduled times (P1:
 #    the filter bank is post-processing — examples/spectral_filterbank.jl
 #    on the snapshot prefixes; no in-situ sfswriter, it cannot span
 #    restarts).
 #
 # Environment knobs (set by the job script; sbatch does not forward
-# submission env, so they are baked there): DNS_N (972 default; 1080 needs
-# 4 GPUs), DNS_VISC, DNS_SEED, DNS_TWARM, DNS_OUTDIR, DNS_MPIBUF,
-# DNS_DUMMY=1 (tiny grid + short windows, full pipeline — run it before
-# every real submission).
+# submission env, so they are baked there): DNS_RUN (the run id — prints,
+# snapshot prefix, sidecar meta), DNS_N (972 default), DNS_VISC, DNS_SEED,
+# DNS_NLAW (default 20 = 10 t_int), DNS_NDENSE (default 40), DNS_TWARM,
+# DNS_OUTDIR, DNS_MPIBUF, DNS_DUMMY=1 (tiny grid + short windows, full
+# pipeline — run it before every real submission).
 
 using CUDA
 using NCCL
@@ -39,15 +43,18 @@ else
 end
 
 dummy = get(ENV, "DNS_DUMMY", "0") == "1"
+runid = get(ENV, "DNS_RUN", dummy ? "dummy" : "r1")
 n = parse(Int, get(ENV, "DNS_N", dummy ? "64" : "972"))
 visc = parse(Float64, get(ENV, "DNS_VISC", dummy ? "5e-3" : "1e-4"))
 seed = parse(Int, get(ENV, "DNS_SEED", "200"))
 t_warm = parse(Float64, get(ENV, "DNS_TWARM", dummy ? "2.0" : "25.0"))
-nlaw = dummy ? 2 : 20     # law samples after the first: window = nlaw·t_int/2
-ndense = dummy ? 5 : 40   # test-style samples over the first t_int
+# law samples after the first: window = nlaw·t_int/2
+nlaw = parse(Int, get(ENV, "DNS_NLAW", dummy ? "2" : "20"))
+# test-style/pairing samples over the first t_int (0 = law mode only)
+ndense = parse(Int, get(ENV, "DNS_NDENSE", dummy ? "5" : "40"))
 totalenergy = 0.2
 cfl = 0.85  # fraction of the RK3 stability boundary (see spectral_solve!)
-outdir = get(ENV, "DNS_OUTDIR", "output-r1")
+outdir = get(ENV, "DNS_OUTDIR", "output-$runid")
 snapdir = joinpath(outdir, "snapshots")
 rank == 0 && (mkpath(outdir); mkpath(snapdir))
 MPI.Barrier(comm)
@@ -65,7 +72,8 @@ s = spectral_setup(;
     end,
 )
 rank == 0 && println(
-    "R1: n = $n, kcut = $(s.kcut), visc = $visc, seed = $seed, " *
+    "$runid: n = $n, kcut = $(s.kcut), visc = $visc, seed = $seed, " *
+    "nlaw = $nlaw, ndense = $ndense, " *
     "procgrid = $(s.topo.procgrid), mpibuf = $(s.mpimode)$(dummy ? " [DUMMY]" : "")",
 )
 
@@ -134,9 +142,9 @@ times = Vector{Float64}(sched["times"])
 # Phase 3: production — raw snapshots at the scheduled times. `tstart = t0`
 # skips the entries an earlier job already saved.
 snaps = snapshotsaver(
-    joinpath(snapdir, "r1");
+    joinpath(snapdir, runid);
     times,
-    meta = (; run = "R1", seed, eref),
+    meta = (; run = runid, seed, eref),
     tstart = t0,
 )
 state = spectral_solve!(;
@@ -149,7 +157,7 @@ if state.t < times[end] - tol
 else
     st = spectral_stats(uh, s)
     rank == 0 && println(
-        "R1 complete: t = $(state.t), $(length(times)) snapshots under $snapdir\n" *
+        "$runid complete: t = $(state.t), $(length(times)) snapshots under $snapdir\n" *
         "final stats: Re_λ = $(st.Re_tay), kmaxη = $(st.kmax_eta), t_int = $(st.t_int), η = $(st.l_kol)",
     )
 end

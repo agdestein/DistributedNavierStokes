@@ -111,14 +111,18 @@ sharing the pencil/transpose layer — implemented and tested:
   in Δt. Spectral `procgrid`
   defaults to `(1, nranks)` slabs (measured fastest at 2-4 GPUs).
 - Example: `examples/spectral_hit.jl` (full production pattern).
-- Campaign run driver: `examples/spectral_r1.jl` +
-  `examples/snellius/spectral_r1.sh` (the ν = 1e-4 resolution-check DNS,
-  CAMPAIGN.md) — three restartable phases: warm-up with a stationarity
+- Campaign run driver: `examples/spectral_run.jl` +
+  `examples/snellius/spectral_campaign.sh` (the R2/R3 campaign,
+  CAMPAIGN.md; generalizes the retired `spectral_r1.jl`, run id `r1`) —
+  one realization per run id, the job script's table owning (n, ν, seed,
+  window, GPUs); three restartable phases: warm-up with a stationarity
   drift record, a sampling schedule fixed from the *measured* t_int and
-  persisted to `schedule.toml`, then raw-snapshot production. Restarts
-  skip already-saved schedule entries (`snapshotsaver(; tstart)` —
-  without it a restart would rewrite every earlier snapshot index with
-  the restart-time field). `sbatch spectral_r1.sh dummy` runs the whole
+  persisted to `schedule.toml` (law window length and optional dense
+  window via `DNS_NLAW`/`DNS_NDENSE`), then raw-snapshot production.
+  Restarts skip already-saved schedule entries (`snapshotsaver(;
+  tstart)` — without it a restart would rewrite every earlier snapshot
+  index with the restart-time field).
+  `./examples/snellius/spectral_campaign.sh dummy` runs the whole
   pipeline tiny first; verified locally incl. a mid-production
   stop/resume with earlier snapshots byte-untouched.
 - Snellius multi-device validation: 4 H100s vs 1 H100 produce the same

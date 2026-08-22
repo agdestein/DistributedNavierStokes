@@ -323,18 +323,16 @@ transformed); η recorded as `l_kol` in `statistics_dns`.
 
 ## Run scripts
 
-- **R1** (`examples/spectral_r1.jl` + `snellius/spectral_r1.sh`, built
-  2026-08-14): the ν = 1e-4 resolution-check DNS. Defaults to 972³ on
-  2 H100s (the measured tight fit; `sbatch --ntasks=4 --gpus=4 …
-  spectral_r1.sh 1080` for the roomier variant at ~1.5× the SBU/tu).
+- **R1** (built 2026-08-14 as `examples/spectral_r1.jl` +
+  `snellius/spectral_r1.sh`; generalized 2026-08-22 into the campaign
+  runner below — run id `r1` reproduces it): the ν = 1e-4
+  resolution-check DNS, 972³ on 2 H100s (the measured tight fit).
   Three restartable phases: warm-up to t = 25 (≈ 3 nominal t_int, drift
   in stats.csv), a sampling schedule fixed from the warm-up-end
   *measured* t_int (law: every t_int/2 over 10 t_int; test-style: 40
   over the first t_int) persisted to schedule.toml, then production with
   raw-f64 snapshots (P1 — the bank runs offline afterwards via
-  `spectral_filterbank.jl`). `sbatch spectral_r1.sh dummy` runs the
-  whole pipeline tiny — do that before every real submission.
-  Building it exposed and fixed a production-blocking restart bug:
+  `spectral_filterbank.jl`). Building it exposed and fixed a production-blocking restart bug:
   `snapshotsaver` now takes `tstart` (the checkpoint's time) so restarts
   skip already-saved entries instead of rewriting every earlier snapshot
   index with the restart-time field. Verified locally end-to-end at 256³
@@ -377,3 +375,34 @@ transformed); η recorded as `l_kol` in `statistics_dns`.
   The window rule dropped every M = 64 combo at this Re (widest column
   Δ/η = 60 is Δ/h = 1.67 there), as the campaign design predicts for
   the high-Re row.
+
+- **R2 + R3** (`examples/spectral_run.jl` +
+  `snellius/spectral_campaign.sh`, built 2026-08-22): the R1 driver
+  generalized to the whole campaign — `DNS_RUN` (run id into prints,
+  snapshot prefix, sidecar meta), `DNS_NLAW` (law window =
+  nlaw·t_int/2) and `DNS_NDENSE` (test-style/pairing window; 0
+  disables it) join the env knobs; everything else (round-one physics,
+  three restartable phases, measured-t_int schedule, raw-f64 P1 store)
+  is unchanged from the production-validated R1 driver. The job script
+  self-submits: `./examples/snellius/spectral_campaign.sh <runid>` on a
+  login node looks the run up in its table (the single source of truth
+  for n, ν, seed, window, GPUs, time limit — the R2 resolution ladder
+  of data-campaign.md §2), sbatches itself with the right
+  `--ntasks/--gpus/--time`, and resubmits across 12-h chunks via the
+  stop-file pattern. Ids: r2a-s11…14 (384³, ν = 4e-4, 20 t_int, 1
+  GPU), r2ap-s15 (512³, ν = 4e-4, 10 t_int — the resolution pair),
+  r2b-s21…23 (512³, ν = 2.5e-4, 20 t_int, 1 GPU), r2c-s31…33 (810³,
+  ν = 1.5e-4, 12 t_int, 2 GPUs), r2d-s41/42 (972³, ν = 1e-4, 10 t_int,
+  2 GPUs; s42 optional), r3-s51/52 (1200³, ν = 8e-5, 5 t_int + the
+  40-snapshot pairing window, 4 GPUs; s52 optional), r1. Seeds avoid
+  the legacy {1, 2, 3, 100, 200}; outdir defaults to
+  `/projects/prjs1757/dns2/<runid>`. The recommended 13-run set (s42
+  and s52 excluded) prices at ≈ 65k SBU (R2 ≈ 41k + R3 ≈ 24k) and
+  ≈ 1.2 TB. Validated 2026-08-22: submit geometry stub-tested for
+  every id (incl. rejection of unknown ids and the DUMMY_GPUS=4
+  4-rank dummy), and two local CPU-backend dummies pass end-to-end —
+  the new law-only path (`DNS_NDENSE=0`: 4 snapshots at t_int/2,
+  correct prefix/meta) and the default dense-window path (7 snapshots,
+  r1-equivalent). Run `…/spectral_campaign.sh dummy` on the cluster
+  before every submission round, and once with `DUMMY_GPUS=4` before
+  r3.

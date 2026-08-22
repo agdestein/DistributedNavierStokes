@@ -307,7 +307,7 @@ step, Δt, forcing shell reference energies, IC seed/config. Decisions:
   index in the times list, so numbering is restart-invariant), else the
   initial processor call rewrites every earlier index with the
   restart-time field. Drivers pass the checkpoint's time (see
-  `examples/spectral_r1.jl`, the production template: warm-up →
+  `examples/spectral_run.jl`, the production template: warm-up →
   measured-t_int schedule persisted to TOML → snapshot production, all
   three phases restartable).
 
